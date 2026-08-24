@@ -52,16 +52,18 @@ Open the printed URL (default `http://localhost:8000`).
 
 ### Live demo (GitHub Pages)
 
-Every push to `main` deploys automatically:
+**URL:** [https://akhanshasen.github.io/The-Soothing-Cruise/](https://akhanshasen.github.io/The-Soothing-Cruise/)
 
-**https://akhanshasen.github.io/The-Soothing-Cruise/**
+Every push to `main` auto-deploys via GitHub Actions.
 
-First-time setup (one-time, in the repo on GitHub):
+**One-time setup** (do this once in GitHub):
 
-1. **Settings → Pages → Build and deployment → Source:** choose **GitHub Actions**
-2. Push to `main` (or re-run the **Deploy to GitHub Pages** workflow under Actions)
+1. Open [The-Soothing-Cruise → Settings → Pages](https://github.com/AkhanshaSen/The-Soothing-Cruise/settings/pages)
+2. Under **Build and deployment → Source**, choose **Deploy from a branch**
+3. Branch: **`gh-pages`** · Folder: **`/ (root)`** · Save
+4. Wait ~1 minute, then open the URL above
 
-No build command — static files only. Works on Vercel / Netlify the same way (`index.html` at the root).
+If the site 404s, open **Actions**, re-run **Deploy to GitHub Pages**, then refresh after the run completes.
 
 ### 3D assets (Kenney CC0)
 
