@@ -6,9 +6,14 @@
  * - lateral drift uses sin(yawOffset)
  * - when steer is released, yawOffset relaxes back toward road heading
  *   (lateral lane position is kept — a lane change sticks)
+ * - road-wheel angle is a critically damped 2nd-order filter so keyboard
+ *   input has weight instead of snapping to full lock
  */
 
 import { clamp, damp } from '../core/util.js';
+
+const STEER_IN = 20.0; // rad/s, turning in (~195 ms to 90%)
+const STEER_BACK = 31.0; // rad/s, centering (self-aligns faster)
 
 export function updateDrive(state, input, dt, spec) {
   const speed = state.speed;
@@ -21,10 +26,23 @@ export function updateDrive(state, input, dt, spec) {
   const speedRatio = spec && spec.top ? clamp(absSpeed / spec.top, 0, 1) : 0;
   const maxSteer = spec ? spec.steer / (1 + 12 * speedRatio * speedRatio) : 0.3;
 
-  // Convert driver input to steer angle.
-  // Note: we apply a minus sign so "steerIn=+1 (right)" moves toward negative lateral,
-  // matching our road-frame lateral definition.
-  const steerAngle = steerIn * maxSteer;
+  // Critically damped 2nd-order filter toward the requested road-wheel angle.
+  if (state.steerVel == null) state.steerVel = 0;
+  if (state.steerAngle == null) state.steerAngle = 0;
+
+  const targetAngle = steerIn * maxSteer;
+  const centering =
+    Math.abs(targetAngle) < Math.abs(state.steerAngle) || targetAngle * state.steerAngle < 0;
+  const w = centering ? STEER_BACK : STEER_IN;
+
+  const d = state.steerAngle - targetAngle;
+  const b = state.steerVel + w * d;
+  const ex = Math.exp(-w * dt);
+  const dd = d + b * dt;
+  state.steerAngle = targetAngle + dd * ex;
+  state.steerVel = (b - w * dd) * ex;
+
+  const steerAngle = state.steerAngle;
   const wheelbase = spec?.wheelbase ?? 2.5;
 
   // Bicycle yaw rate in road frame.
