@@ -77,17 +77,8 @@ function enhanceMaterials(root) {
 }
 
 function cloneProp(template) {
-  const root = template.clone(true);
-  root.traverse((o) => {
-    if (!o.isMesh) return;
-    if (o.geometry) o.geometry = o.geometry.clone();
-    if (o.material) {
-      o.material = Array.isArray(o.material)
-        ? o.material.map((m) => m.clone())
-        : o.material.clone();
-    }
-  });
-  return root;
+  // Share geometry + materials; only transform the instance.
+  return template.clone(true);
 }
 
 function placeProp(template, { x, y, z, yaw = 0, scale = 1 }) {
@@ -96,7 +87,6 @@ function placeProp(template, { x, y, z, yaw = 0, scale = 1 }) {
   const box = new THREE.Box3().setFromObject(root);
   root.position.set(x, y - box.min.y, z);
   root.rotation.y = yaw;
-  enhanceMaterials(root);
   return root;
 }
 
@@ -178,6 +168,8 @@ export class World {
 
     for (const [i, chunk] of this.chunks) {
       if (!keep.has(i)) {
+        const s0 = i * CHUNK_LEN;
+        this.streetLights = this.streetLights.filter((l) => l.s0 !== s0);
         this.stage.remove(chunk);
         this.dispose(chunk);
         this.chunks.delete(i);
@@ -189,8 +181,7 @@ export class World {
     const group = new THREE.Group();
     group.userData.s0 = s0;
     const rng = new Rng((s0 * 9781) | 0);
-    const ROAD_STEP = 2.5;
-    const TERRAIN_STEP = 12;
+    const ROAD_STEP = 5;
 
     const grassM = mat(PAL.grass);
     const sandM = mat(PAL.sand);
@@ -199,13 +190,15 @@ export class World {
     const edgeM = mat(PAL.roadEdge);
     const shoulderM = mat(0x4a4a52);
     const markM = new THREE.MeshBasicMaterial({ color: PAL.mark });
+    for (const m of [grassM, sandM, waterM, roadM, edgeM, shoulderM, markM]) m.userData.owned = true;
 
-    const addSlab = (mx, my, mz, yaw, w, d, h, material, ox, oy, oz) => {
+    const addSlab = (mx, my, mz, yaw, w, d, h, material, ox, oy, oz, castShadow, receiveShadow) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d + 0.12), material);
       m.position.set(mx + ox, my + oy, mz + oz);
       m.rotation.y = yaw;
-      m.castShadow = true;
-      m.receiveShadow = true;
+      m.castShadow = castShadow;
+      m.receiveShadow = receiveShadow;
+      m.userData.ownedGeo = true;
       group.add(m);
     };
 
@@ -227,12 +220,14 @@ export class World {
       const nx = -Math.sin(hAvg);
       const nz = Math.cos(hAvg);
 
-      addSlab(mx, my, mz, yaw, 55, segLen, 0.35, grassM, nx * 32, -0.12, nz * 32);
-      addSlab(mx, my, mz, yaw, 16, segLen, 0.3, sandM, -nx * 12, -0.15, -nz * 12);
-      addSlab(mx, my, mz, yaw, 90, segLen, 0.25, waterM, -nx * 56, -0.28, -nz * 56);
-      addSlab(mx, my, mz, yaw, ROAD_W + 0.6, segLen, 0.18, edgeM, 0, 0.02, 0);
-      addSlab(mx, my, mz, yaw, ROAD_W + 0.2, segLen, 0.14, shoulderM, 0, ROAD_SURFACE - 0.02, 0);
-      addSlab(mx, my, mz, yaw, ROAD_W, segLen, 0.12, roadM, 0, ROAD_SURFACE, 0);
+      // Terrain: receive shadows, but don't cast (keeps sun shadow pass cheap).
+      addSlab(mx, my, mz, yaw, 55, segLen, 0.35, grassM, nx * 32, -0.12, nz * 32, false, true);
+      addSlab(mx, my, mz, yaw, 16, segLen, 0.3, sandM, -nx * 12, -0.15, -nz * 12, false, true);
+      addSlab(mx, my, mz, yaw, 90, segLen, 0.25, waterM, -nx * 56, -0.28, -nz * 56, false, true);
+      addSlab(mx, my, mz, yaw, ROAD_W + 0.6, segLen, 0.18, edgeM, 0, 0.02, 0, false, true);
+      addSlab(mx, my, mz, yaw, ROAD_W + 0.2, segLen, 0.14, shoulderM, 0, ROAD_SURFACE - 0.02, 0, false, true);
+      // Road: cast + receive.
+      addSlab(mx, my, mz, yaw, ROAD_W, segLen, 0.12, roadM, 0, ROAD_SURFACE, 0, true, true);
     }
 
     // Center dashes — follow path exactly
@@ -242,27 +237,10 @@ export class World {
       const dash = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.035, 2.4), markM);
       dash.position.set(f.x, f.y + ROAD_SURFACE + 0.012, f.z);
       dash.rotation.y = yaw;
+      dash.castShadow = false;
+      dash.receiveShadow = false;
+      dash.userData.ownedGeo = true;
       group.add(dash);
-    }
-
-    // Coarser terrain backdrop fill (hidden under road slabs)
-    for (let i = 0; i < TERRAIN_STEP; i++) {
-      const sA = s0 + (i / TERRAIN_STEP) * CHUNK_LEN;
-      const sB = s0 + ((i + 1) / TERRAIN_STEP) * CHUNK_LEN;
-      const a = this.highway.at(sA);
-      const b = this.highway.at(sB);
-      const dx = b.x - a.x;
-      const dz = b.z - a.z;
-      const segLen = Math.hypot(dx, dz) + 0.5;
-      if (segLen < 0.001) continue;
-      const yaw = Math.atan2(dx, dz);
-      const mx = (a.x + b.x) * 0.5;
-      const my = (a.y + b.y) * 0.5;
-      const mz = (a.z + b.z) * 0.5;
-      const hAvg = (a.heading + b.heading) * 0.5;
-      const nx = -Math.sin(hAvg);
-      const nz = Math.cos(hAvg);
-      addSlab(mx, my, mz, yaw, 58, segLen, 0.32, grassM, nx * 34, -0.18, nz * 34);
     }
 
     this.scatterTrees(group, s0, rng);
@@ -275,18 +253,57 @@ export class World {
   }
 
   /** Warm street-lamp glow — intensity driven by night blend (0–1). */
-  setNightLevel(night) {
+  setNightLevel(night, camPos) {
     const n = Math.max(0, Math.min(1, night));
+    const radius = 120;
+    const r2 = radius * radius;
+    const MAX_LIT = 12;
+
+    if (!camPos || n < 0.05) {
+      for (const l of this.streetLights) {
+        l.bulb.visible = false;
+        l.bulb.intensity = 0;
+      }
+      return;
+    }
+
+    const ranked = [];
     for (const l of this.streetLights) {
-      l.intensity = n * 2.4;
+      const dx = l.x - camPos.x;
+      const dz = l.z - camPos.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 <= r2) ranked.push({ l, d2 });
+    }
+    ranked.sort((a, b) => a.d2 - b.d2);
+
+    const on = new Set(ranked.slice(0, MAX_LIT).map((e) => e.l));
+    for (const l of this.streetLights) {
+      if (!on.has(l)) {
+        l.bulb.visible = false;
+        l.bulb.intensity = 0;
+        continue;
+      }
+      const dist = Math.sqrt((l.x - camPos.x) ** 2 + (l.z - camPos.z) ** 2);
+      const fall = 1 - dist / radius;
+      l.bulb.visible = true;
+      l.bulb.intensity = n * 2.4 * fall;
     }
   }
 
   scatterStreetLights(group, s0) {
     const poleM = mat(0x2e2e34);
-    const lampM = new THREE.MeshBasicMaterial({ color: 0xffd8a8 });
+    const lampM = new THREE.MeshStandardMaterial({
+      color: 0xffd8a8,
+      emissive: 0xffb870,
+      emissiveIntensity: 1.2,
+      roughness: 0.55,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    });
+    poleM.userData.owned = true;
+    lampM.userData.owned = true;
 
-    for (let s = s0 + 10; s < s0 + CHUNK_LEN; s += 22) {
+    for (let s = s0 + 10; s < s0 + CHUNK_LEN; s += 35) {
       const f = this.highway.at(s);
       for (const side of [-1, 1]) {
         const lat = ROAD_W / 2 + 1.5;
@@ -296,23 +313,28 @@ export class World {
 
         const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 4.4, 6), poleM);
         pole.position.set(x, y + 2.2, z);
-        pole.castShadow = true;
+        pole.castShadow = false;
+        pole.userData.ownedGeo = true;
         group.add(pole);
 
         const head = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.14, 0.32), lampM);
         head.position.set(x, y + 4.35, z);
+        head.castShadow = false;
+        head.receiveShadow = true;
+        head.userData.ownedGeo = true;
         group.add(head);
 
-        const bulb = new THREE.PointLight(0xffb870, 0, 32, 1.8);
+        const bulb = new THREE.PointLight(0xffb870, 0, 80, 1.7);
         bulb.position.set(x, y + 4.1, z);
+        bulb.visible = false;
         group.add(bulb);
-        this.streetLights.push(bulb);
+        this.streetLights.push({ bulb, x, y: y + 4.1, z, s0 });
       }
     }
   }
 
   scatterTrees(group, s0, rng) {
-    const n = this.trees.length ? 24 : 12;
+    const n = this.trees.length ? 14 : 8;
     for (let i = 0; i < n; i++) {
       const s = s0 + rng.range(4, CHUNK_LEN - 4);
       const f = this.highway.at(s);
@@ -419,10 +441,12 @@ export class World {
 
   dispose(obj) {
     obj.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
+      if (o.geometry && o.userData?.ownedGeo) o.geometry.dispose();
       if (o.material) {
-        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
-        else o.material.dispose();
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+          if (m?.userData?.owned) m.dispose();
+        }
       }
     });
   }
