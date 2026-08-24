@@ -226,6 +226,9 @@ function restartDrive() {
   state.lateral = 0;
   state.yawOffset = 0;
   state.steerAngle = 0;
+  state.steerVel = 0;
+  state.rollLoad = 0;
+  state.pitchLoad = 0;
   state.speed = 0;
   const start = world.highway.at(state.s);
   applyCarTransform(start);
@@ -405,7 +408,16 @@ const skySystem = new SkySystem(scene, sun, hemi, ambient);
 const world = new World();
 scene.add(world.stage);
 
-const state = { s: 40, lateral: 0, yawOffset: 0, steerAngle: 0, speed: 0 };
+const state = {
+  s: 40,
+  lateral: 0,
+  yawOffset: 0,
+  steerAngle: 0,
+  steerVel: 0,
+  rollLoad: 0,
+  pitchLoad: 0,
+  speed: 0,
+};
 
 let car = buildFallbackCar();
 car.frustumCulled = true;
@@ -493,15 +505,16 @@ function gearForSpeed(speed) {
 }
 
 function playerWorld(f) {
+  const carYaw = f.heading + state.yawOffset;
   return {
     x: f.nx * state.lateral,
     y: ROAD_SURFACE + 0.02,
     z: f.nz * state.lateral,
-    // Car yaw = road tangent yaw + bicycle yaw offset.
-    yaw: f.heading + state.yawOffset,
-    roll: -state.steerAngle * 0.1,
-    tx: f.tx,
-    tz: f.tz,
+    yaw: carYaw,
+    roll: state.rollLoad * 0.12,
+    pitch: state.pitchLoad * 0.04,
+    tx: Math.cos(carYaw),
+    tz: Math.sin(carYaw),
   };
 }
 
@@ -510,11 +523,13 @@ function applyCarTransform(f) {
   const p = playerWorld(frame);
   car.position.set(p.x, p.y, p.z);
   car.rotation.order = 'YXZ';
-  car.rotation.set(0, p.yaw, p.roll);
+  car.rotation.set(p.pitch, p.yaw, p.roll);
 }
 
 function updateCamera(p, dt) {
-  const camDist = 11;
+  const speedKmh = Math.abs(state.speed) * 3.6;
+  const speedT = clamp(speedKmh / 250, 0, 1);
+  const camDist = 11 + 5 * speedT * speedT;
   const camH = 5;
   const look = 14;
   _camPos.set(p.x - p.tx * camDist, p.y + camH, p.z - p.tz * camDist);
@@ -531,6 +546,10 @@ function updateCamera(p, dt) {
   _lookCur.lerp(_camLook, smooth);
   camera.position.copy(_camCur);
   camera.lookAt(_lookCur);
+
+  // Speed FOV (opencity: 62°→80° between 0 and ~200 km/h)
+  camera.fov = damp(camera.fov, 62 + 18 * speedT * speedT, 3.0, dt);
+  camera.updateProjectionMatrix();
 }
 
 function updateHud() {
@@ -564,8 +583,15 @@ function simulateDrive(dt) {
   state.speed = clamp(state.speed, 0, MAX_SPEED);
 
   const steerIn = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-  const next = updateDrive(state, { steer: steerIn }, dt, activeCarSpec);
-  state.steerAngle = next.steerAngle ?? state.steerAngle;
+  updateDrive(state, { steer: steerIn }, dt, activeCarSpec);
+
+  // Body roll: proportional to centripetal force proxy
+  const lateralA = state.steerAngle * Math.abs(state.speed);
+  state.rollLoad = damp(state.rollLoad, clamp(lateralA * 0.08, -1, 1), 4.0, dt);
+
+  // Pitch: nose dips under braking, squats under throttle
+  const targetPitch = throttle < 0 ? -0.55 : throttle > 0 ? 0.28 : 0;
+  state.pitchLoad = damp(state.pitchLoad, targetPitch, 3.5, dt);
 
   const edge = ROAD_HALF - 0.8;
   const over = Math.abs(state.lateral) - edge;
@@ -600,6 +626,7 @@ function update(dt) {
   if (mode === 'preview') {
     state.speed = PREVIEW_SPEED;
     state.steerAngle = 0;
+    state.steerVel = 0;
     state.yawOffset = 0;
     state.lateral = 0;
     updateDrive(state, { steer: 0 }, dt, activeCarSpec);
