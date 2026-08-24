@@ -4,6 +4,8 @@ import { World, ROAD_HALF, ROAD_SURFACE, SKY } from './world.js';
 import { drawMinimap, drawFullMap } from './minimap.js';
 import { updatePauseMenu, handlePauseNav, PAUSE_ACTIONS } from './ui/pause.js';
 import { SkySystem } from './sky.js';
+import { updateDrive } from './vehicle/drive.js';
+import { CARS } from './vehicle/catalog.js';
 
 // --- DOM ---
 const canvas = document.getElementById('game');
@@ -222,10 +224,11 @@ pauseMenu.querySelectorAll('li').forEach((li, i) => {
 function restartDrive() {
   state.s = 40;
   state.lateral = 0;
+  state.yawOffset = 0;
   state.steerAngle = 0;
   state.speed = 0;
   const start = world.highway.at(state.s);
-  applyCarTransform();
+  applyCarTransform(start);
   world.recenter(start.x, start.y, start.z);
   world.sync(state.s);
   camInit = false;
@@ -301,10 +304,13 @@ const gltfLoader = new GLTFLoader();
 gltfLoader.setPath('./assets/vehicles/');
 const modelCache = new Map();
 
-async function loadKenneyCar(file) {
-  if (modelCache.has(file)) return modelCache.get(file).clone(true);
+async function loadKenneyCar(file, spec) {
+  const cacheKey = spec?.id ? `${file}:${spec.id}` : file;
+  if (modelCache.has(cacheKey)) return modelCache.get(cacheKey).clone(true);
 
   const gltf = await gltfLoader.loadAsync(file);
+  // Kenney assets are rotated per-car-kit via `modelYaw` (catalog.js).
+  if (spec?.modelYaw != null) gltf.scene.rotation.y = spec.modelYaw;
   const root = new THREE.Group();
   root.add(gltf.scene);
 
@@ -321,7 +327,7 @@ async function loadKenneyCar(file) {
     if (!o.isMesh) return;
     o.castShadow = true;
     o.receiveShadow = true;
-    o.frustumCulled = false;
+    o.frustumCulled = true;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     for (const m of mats) {
       if (!m) continue;
@@ -330,7 +336,7 @@ async function loadKenneyCar(file) {
     }
   });
 
-  modelCache.set(file, root);
+  modelCache.set(cacheKey, root);
   return root.clone(true);
 }
 
@@ -362,13 +368,13 @@ function updateHudCarLabel(label) {
 
 // --- Renderer ---
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
 renderer.setClearColor(SKY);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY);
@@ -382,10 +388,10 @@ const ambient = new THREE.AmbientLight(0xffffff, 0.3);
 scene.add(ambient);
 const sun = new THREE.DirectionalLight(0xffe6bd, 1.25);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(1024, 1024);
 sun.shadow.camera.near = 1;
 sun.shadow.camera.far = 140;
-const sh = 45;
+const sh = 28;
 sun.shadow.camera.left = -sh;
 sun.shadow.camera.right = sh;
 sun.shadow.camera.top = sh;
@@ -399,15 +405,17 @@ const skySystem = new SkySystem(scene, sun, hemi, ambient);
 const world = new World();
 scene.add(world.stage);
 
-const state = { s: 40, lateral: 0, steerAngle: 0, speed: 0 };
+const state = { s: 40, lateral: 0, yawOffset: 0, steerAngle: 0, speed: 0 };
 
 let car = buildFallbackCar();
-car.frustumCulled = false;
+car.frustumCulled = true;
 scene.add(car);
 
 let activeCarId = 'sport';
+let activeCarSpec = CARS.find((c) => c.id === activeCarId) ?? CARS[0];
 let swapping = false;
 let ready = false;
+let frameCounter = 0;
 /** @type {'loading' | 'preview' | 'drive' | 'paused' | 'map'} */
 let mode = 'loading';
 
@@ -415,13 +423,15 @@ async function setCar(model) {
   if (swapping) return;
   swapping = true;
   try {
-    const next = await loadKenneyCar(model.file);
+    const spec = CARS.find((c) => c.id === model.id) ?? activeCarSpec;
+    const next = await loadKenneyCar(model.file, spec);
     scene.remove(car);
     car = next;
-    car.frustumCulled = false;
+    car.frustumCulled = true;
     scene.add(car);
-    applyCarTransform();
+    applyCarTransform(world.highway.at(state.s));
     activeCarId = model.id;
+    activeCarSpec = spec;
     syncCarButtons();
     updateHudCarLabel(model.label);
   } catch (err) {
@@ -454,13 +464,9 @@ for (const model of CAR_MODELS) {
 }
 
 const MAX_SPEED = 125;
-const CRUISE_ACCEL = 22;
+const CRUISE_ACCEL = 35;
 const BRAKE_FORCE = 75;
-const PREVIEW_SPEED = 16;
-const MAX_STEER = 0.28;
-const STEER_RATE = 8;
-const TURN_GAIN = 0.26;
-const LANE_GRIP = 2.2;
+const PREVIEW_SPEED = 22;
 
 const _camPos = new THREE.Vector3();
 const _camLook = new THREE.Vector3();
@@ -491,17 +497,17 @@ function playerWorld(f) {
     x: f.nx * state.lateral,
     y: ROAD_SURFACE + 0.02,
     z: f.nz * state.lateral,
-    // Body follows road heading only — steering moves laterally, not spin
-    yaw: f.heading - Math.PI / 2,
+    // Car yaw = road tangent yaw + bicycle yaw offset.
+    yaw: f.heading + state.yawOffset,
     roll: -state.steerAngle * 0.1,
     tx: f.tx,
     tz: f.tz,
   };
 }
 
-function applyCarTransform() {
-  const f = world.highway.at(state.s);
-  const p = playerWorld(f);
+function applyCarTransform(f) {
+  const frame = f ?? world.highway.at(state.s);
+  const p = playerWorld(frame);
   car.position.set(p.x, p.y, p.z);
   car.rotation.order = 'YXZ';
   car.rotation.set(0, p.yaw, p.roll);
@@ -530,7 +536,7 @@ function updateCamera(p, dt) {
 function updateHud() {
   speedEl.textContent = String(Math.round(Math.abs(state.speed) * 3.6));
   gearEl.textContent = `GEAR ${gearForSpeed(state.speed)}`;
-  drawMinimap(minimapCanvas, world.highway, state);
+  if (frameCounter % 4 === 0) drawMinimap(minimapCanvas, world.highway, state);
   if (mapOpen) drawFullMap(fullmapCanvas, world.highway, state);
 }
 
@@ -554,28 +560,19 @@ function simulateDrive(dt) {
     state.speed = Math.max(0, speed - drag * dt) * sign;
   }
 
-  state.speed = clamp(state.speed, -6, MAX_SPEED);
+  // Avoid reverse in this simplified road streamer (keeps `s` stable for highway.at()).
+  state.speed = clamp(state.speed, 0, MAX_SPEED);
 
-  const steerInput = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-  const maxSteerNow = MAX_STEER * (1 - speedRatio * 0.72);
-  state.steerAngle = damp(state.steerAngle, steerInput * maxSteerNow, STEER_RATE, dt);
-
-  if (state.speed > 0.2) {
-    state.s += state.speed * dt;
-    const turnRate = TURN_GAIN * Math.max(speed, 5);
-    state.lateral -= state.steerAngle * turnRate * dt;
-  }
-
-  // Only pull toward lane center when driver is not steering
-  if (Math.abs(steerInput) < 0.01) {
-    state.lateral = damp(state.lateral, 0, LANE_GRIP, dt);
-    state.steerAngle = damp(state.steerAngle, 0, 10, dt);
-  }
+  const steerIn = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const next = updateDrive(state, { steer: steerIn }, dt, activeCarSpec);
+  state.steerAngle = next.steerAngle ?? state.steerAngle;
 
   const edge = ROAD_HALF - 0.8;
-  if (Math.abs(state.lateral) > edge) {
-    state.lateral -= Math.sign(state.lateral) * (Math.abs(state.lateral) - edge) * 8 * dt;
-    state.speed = Math.max(0, state.speed - 10 * dt);
+  const over = Math.abs(state.lateral) - edge;
+  if (over > 0) {
+    state.lateral = Math.sign(state.lateral || 1) * edge;
+    state.yawOffset = damp(state.yawOffset, 0, 6, dt);
+    state.speed *= Math.max(0, 1 - over * 8 * dt);
   }
 
   state.lateral = clamp(state.lateral, -ROAD_HALF, ROAD_HALF);
@@ -583,17 +580,18 @@ function simulateDrive(dt) {
 
 function syncWorld(dt) {
   const f = world.highway.at(state.s);
-  applyCarTransform();
+  applyCarTransform(f);
   world.recenter(f.x, f.y, f.z);
   world.sync(state.s);
 
   const p = playerWorld(f);
   const sky = skySystem.update(dt, p);
-  world.setNightLevel(sky.night);
+  world.setNightLevel(sky.night, p);
   updateCamera(p, dt);
 }
 
 function update(dt) {
+  frameCounter++;
   handleMenuKeys();
 
   if (keys.reset && !resetEdge && mode === 'drive') restartDrive();
@@ -601,10 +599,10 @@ function update(dt) {
 
   if (mode === 'preview') {
     state.speed = PREVIEW_SPEED;
-    state.steerAngle = Math.sin(state.s * 0.018) * 0.05;
-    state.s += state.speed * dt;
-    state.lateral -= state.steerAngle * 0.15 * dt;
-    state.lateral = clamp(state.lateral, -ROAD_HALF * 0.4, ROAD_HALF * 0.4);
+    state.steerAngle = 0;
+    state.yawOffset = 0;
+    state.lateral = 0;
+    updateDrive(state, { steer: 0 }, dt, activeCarSpec);
     syncWorld(dt);
     return;
   }
@@ -651,8 +649,8 @@ async function boot() {
     await setCar(CAR_MODELS[0]);
 
     world.sync(state.s);
-    applyCarTransform();
     const start = world.highway.at(state.s);
+    applyCarTransform(start);
     world.recenter(start.x, start.y, start.z);
 
     setLoading(1, 'Ready!');
