@@ -1,10 +1,10 @@
-# Sojourn
+# The Soothing Cruise
 
-An endless, soothing cruise through living landscapes. Drive a quiet car along a never-ending scenic highway that melts from coast to pine forest, cherry vale, high meadow, moon desert, lake country, aurora pass, and lavender dusk.
+An endless, soothing coastal drive — pick a car, cruise an infinite curved highway, and watch the sky shift from day to golden hour to night.
 
-Built as original work in vanilla JavaScript with Three.js and the Web Audio API. No bundler. No downloaded music files. No city racing sim.
+**Play online:** [https://akhanshasen.github.io/The-Soothing-Cruise/](https://akhanshasen.github.io/The-Soothing-Cruise/)
 
-Inspired by [OpenCity](https://github.com/Basharkhan7776/opencity)'s cel-shaded coastal drive look and HUD layout — but Sojourn is its own game: endless cruise, no races, no traffic AI, no procedural city graph.
+Built with vanilla JavaScript, Three.js, and Kenney CC0 assets. No bundler required.
 
 ## What it is
 
@@ -50,7 +50,18 @@ npm start
 
 Open the printed URL (default `http://localhost:8000`).
 
-Deploy the folder as a static site (Vercel / Netlify / GitHub Pages) with `index.html` at the root. No build command.
+### Live demo (GitHub Pages)
+
+Every push to `main` deploys automatically:
+
+**https://akhanshasen.github.io/The-Soothing-Cruise/**
+
+First-time setup (one-time, in the repo on GitHub):
+
+1. **Settings → Pages → Build and deployment → Source:** choose **GitHub Actions**
+2. Push to `main` (or re-run the **Deploy to GitHub Pages** workflow under Actions)
+
+No build command — static files only. Works on Vercel / Netlify the same way (`index.html` at the root).
 
 ### 3D assets (Kenney CC0)
 
