@@ -291,51 +291,10 @@ button.primary:active {
   color: #1a1418;
 }
 
-#controls {
-  position: absolute;
-  bottom: max(4.5rem, calc(env(safe-area-inset-bottom) + 3.5rem));
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.45rem;
-  pointer-events: auto;
-}
-
-#controls-row {
-  display: flex;
-  gap: 0.45rem;
-}
-
-#controls button {
-  width: 4.25rem;
-  height: 4.25rem;
-  border: none;
-  border-radius: 1rem;
-  background: rgba(255, 255, 255, 0.88);
-  color: #1a1a1a;
-  font-size: 1.35rem;
-  font-weight: 700;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-  cursor: pointer;
-  transition: transform 0.08s, background 0.08s;
-}
-
-#controls button:active,
-#controls button.pressed {
-  transform: scale(0.94);
-  background: #ffd54f;
-}
-
-#btn-forward {
-  width: 4.25rem;
-}
-
 /* --- Minimap --- */
 .minimap {
   position: absolute;
-  bottom: max(4.5rem, calc(env(safe-area-inset-bottom) + 3.5rem));
+  bottom: max(1.25rem, env(safe-area-inset-bottom));
   left: max(1rem, env(safe-area-inset-left));
   width: 120px;
   height: 120px;
@@ -402,21 +361,29 @@ button.primary:active {
 
 .oc-pause-menu {
   list-style: none;
-  padding: 0;
-  margin: 0;
-  display: block;
+  padding: 0.4rem 0 0.2rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 16rem;
+}
+
+.oc-pause-menu.hidden {
+  display: none !important;
 }
 
 .oc-pause-menu li {
-  font-size: 1.05rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  padding: 0.45rem 0;
-  padding-left: 1.4rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  padding: 0.55rem 0 0.55rem 1.6rem;
   position: relative;
-  opacity: 0.55;
+  opacity: 0.72;
   cursor: pointer;
   user-select: none;
+  color: #fff;
+  text-transform: uppercase;
 }
 
 .oc-pause-menu li:hover {
@@ -458,22 +425,43 @@ button.primary:active {
 }
 
 .oc-pause-settings.hidden,
-.oc-pause-vehicle.hidden {
-  display: none;
-}
-
-#pause-menu[hidden] {
+.oc-pause-vehicle.hidden,
+.oc-pause-menu.hidden {
   display: none !important;
 }
 
-.row select {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 6px;
-  padding: 0.35rem 0.5rem;
-  font: 500 0.85rem Outfit, system-ui, sans-serif;
-  min-width: 180px;
+.settings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: min(420px, calc(100% - 2rem));
+}
+
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.55rem 0;
+  font: 600 0.92rem Outfit, system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.settings-row.selected {
+  color: #f0b429;
+}
+
+.settings-row.selected::before {
+  content: '▸ ';
+  color: #f0b429;
+}
+
+.settings-val {
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  opacity: 0.92;
+  white-space: nowrap;
 }
 
 .pause-garage {

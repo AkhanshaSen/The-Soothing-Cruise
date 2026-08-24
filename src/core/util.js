@@ -29,6 +29,11 @@ export function smoothstep(a, b, x) {
   return t * t * (3 - 2 * t);
 }
 
+/** Exponential approach — OpenCity camera.js */
+export function approach(current, target, rate, dt) {
+  return current + (target - current) * (1 - Math.exp(-rate * dt));
+}
+
 export function hexColor(n) {
   return `#${n.toString(16).padStart(6, '0')}`;
 }

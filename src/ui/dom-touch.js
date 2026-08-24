@@ -38,6 +38,10 @@ export class DomTouchBridge {
   _syncSteer() {
     this.steer = (this._right ? 1 : 0) - (this._left ? 1 : 0);
   }
+
+  setHandbrake(on) {
+    this.handbrake = on ? 1 : 0;
+  }
 }
 
 export function bindDriveButtons(input, bridge) {
@@ -65,4 +69,5 @@ export function bindDriveButtons(input, bridge) {
   bind('btn-right', () => bridge.setRight(true), () => bridge.setRight(false));
   bind('btn-forward', () => bridge.setForward(true), () => bridge.setForward(false));
   bind('btn-back', () => bridge.setBack(true), () => bridge.setBack(false));
+  bind('btn-handbrake', () => bridge.setHandbrake(true), () => bridge.setHandbrake(false));
 }

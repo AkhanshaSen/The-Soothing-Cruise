@@ -2,13 +2,13 @@ import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { World, ROAD_HALF, ROAD_SURFACE, SKY } from './world.js';
 import { drawMinimap, drawFullMap } from './minimap.js';
-import { updatePauseMenu, handlePauseNav, PAUSE_ACTIONS } from './ui/pause.js';
+import { updatePauseMenu, handlePauseNav, PAUSE_ACTIONS, loadGfx, saveGfx, TIME_MODES, GFX_RES, GFX_DIST, GFX_SHADOWS, cycleSetting } from './ui/pause.js';
 import { SkySystem } from './sky.js';
 import { stepVehicle } from './vehicle/drive.js';
+import { ChaseCamera } from './vehicle/camera.js';
 import { tickWater } from './water.js';
 import { CARS } from './vehicle/catalog.js';
 import { Input, driverInputFrom } from './core/input.js';
-import { DomTouchBridge, bindDriveButtons } from './ui/dom-touch.js';
 
 // --- DOM ---
 const canvas = document.getElementById('game');
@@ -32,16 +32,15 @@ const mapBackBtn = document.getElementById('map-back');
 const minimapBtn = document.getElementById('minimap-btn');
 const minimapCanvas = document.getElementById('minimap');
 const fullmapCanvas = document.getElementById('fullmap');
-const timeModeSelect = document.getElementById('time-mode');
-const cycleMinSelect = document.getElementById('cycle-min');
+const settingsList = document.getElementById('settings-list');
 
 const uiRoot = document.body;
 const driveInput = new Input();
-const touchBridge = new DomTouchBridge();
-bindDriveButtons(driveInput, touchBridge);
 
 let pauseIndex = 0;
 let pauseView = 'menu';
+let pauseSettingsIndex = 0;
+let gfx = loadGfx();
 
 function setLoading(progress, label) {
   loadingFill.style.width = `${Math.round(progress * 100)}%`;
@@ -60,7 +59,18 @@ function startDrive() {
   previewEl.classList.add('hidden');
   hud.classList.remove('hidden');
   mode = 'drive';
+  state.s = 40;
+  state.lateral = 0;
+  state.yawOffset = 0;
+  state.steerAngle = 0;
+  state.steerVel = 0;
   state.speed = 0;
+  _simAcc = 0;
+  lookYaw = 0;
+  lookPitch = 0;
+  chaseCam.reset();
+  canvas.focus({ preventScroll: true });
+  requestPointerLock();
 }
 
 beginDriveBtn.addEventListener('click', startDrive);
@@ -74,7 +84,13 @@ function activeCarLabel() {
 }
 
 function refreshPauseUi() {
-  updatePauseMenu(uiRoot, { index: pauseIndex, carName: activeCarLabel(), view: pauseView });
+  updatePauseMenu(uiRoot, {
+    index: pauseIndex,
+    carName: activeCarLabel(),
+    view: pauseView,
+    settingsIndex: pauseSettingsIndex,
+    gfx,
+  });
 }
 
 function setPaused(v) {
@@ -85,7 +101,14 @@ function setPaused(v) {
   if (v) {
     pauseIndex = 0;
     pauseView = 'menu';
+    pauseSettingsIndex = 0;
     refreshPauseUi();
+    document.exitPointerLock?.();
+    lookYaw = 0;
+    lookPitch = 0;
+  } else if (!flyMode) {
+    canvas.focus({ preventScroll: true });
+    requestPointerLock();
   }
 }
 
@@ -114,6 +137,7 @@ function activatePauseItem(index) {
   const action = PAUSE_ACTIONS[index];
   if (action === 'settings') {
     pauseView = 'settings';
+    pauseSettingsIndex = 0;
     refreshPauseUi();
     return;
   }
@@ -149,12 +173,11 @@ function restartDrive() {
   state.pitchLoad = 0;
   state.speed = 0;
   _simAcc = 0;
+  chaseCam.reset();
   const start = world.highway.at(state.s);
   applyCarTransform(start);
-  world.recenter(start.x, start.y, start.z);
+  world.recenter(start.x, 0, start.z);
   world.sync(state.s);
-  camInit = false;
-  camYawReady = false;
   setPaused(false);
 }
 
@@ -162,19 +185,31 @@ function handlePauseInput() {
   const result = handlePauseNav(uiRoot, {
     up: driveInput.menuUpPressed,
     down: driveInput.menuDownPressed,
+    left: driveInput.menuLeftPressed,
+    right: driveInput.menuRightPressed,
     confirm: driveInput.confirmPressed,
-    back: driveInput.pausePressed,
+    back: false,
     index: pauseIndex,
     view: pauseView,
+    settingsIndex: pauseSettingsIndex,
+    gfx,
     onAction: runPauseAction,
     onViewChange: (view) => {
       pauseView = view;
+      if (view === 'settings') pauseSettingsIndex = 0;
+      refreshPauseUi();
+    },
+    onGfxChange: (next) => {
+      gfx = next;
+      saveGfx(gfx);
+      applyGfx();
       refreshPauseUi();
     },
   });
 
   if (result.index !== pauseIndex) pauseIndex = result.index;
   if (result.view !== pauseView) pauseView = result.view;
+  if (result.settingsIndex !== pauseSettingsIndex) pauseSettingsIndex = result.settingsIndex;
 }
 
 pauseGarage.addEventListener('click', (e) => {
@@ -202,12 +237,6 @@ function handleMenuKeys() {
   if (mode === 'paused') handlePauseInput();
 }
 
-timeModeSelect?.addEventListener('change', () => skySystem.setMode(timeModeSelect.value));
-cycleMinSelect?.addEventListener('change', () => {
-  skySystem.setCycleMinutes(parseFloat(cycleMinSelect.value) || 4);
-});
-
-// --- Kenney cars ---
 const CAR_MODELS = [
   { id: 'sport', label: 'Sports', file: 'sedan-sports.glb' },
   { id: 'hatch', label: 'Hatch', file: 'hatchback-sports.glb' },
@@ -215,30 +244,68 @@ const CAR_MODELS = [
   { id: 'race', label: 'Race', file: 'race.glb' },
   { id: 'suv', label: 'SUV', file: 'suv.glb' },
   { id: 'van', label: 'Van', file: 'van.glb' },
+  { id: 'police', label: 'Police', file: 'police.glb' },
 ];
 
 const gltfLoader = new GLTFLoader();
 gltfLoader.setPath('./assets/vehicles/');
 const modelCache = new Map();
 
+/**
+ * Measure Kenney nose from wheel hubs (front − back) and store as modelForward.
+ * Runtime aligns that axis to physics heading via setFromUnitVectors — no Euler guessing.
+ */
+function measureModelForward(root) {
+  const fronts = [];
+  const backs = [];
+  root.updateMatrixWorld(true);
+  root.traverse((child) => {
+    const name = (child.name || '').toLowerCase();
+    if (!name.includes('wheel')) return;
+    const world = new THREE.Vector3();
+    child.getWorldPosition(world);
+    const local = root.worldToLocal(world);
+    if (name.includes('front')) fronts.push(local.clone());
+    else if (name.includes('back') || name.includes('rear')) backs.push(local.clone());
+  });
+
+  const avg = (list) => {
+    const o = new THREE.Vector3();
+    for (const p of list) o.add(p);
+    return list.length ? o.multiplyScalar(1 / list.length) : null;
+  };
+  const front = avg(fronts);
+  const back = avg(backs);
+  if (front && back) {
+    const fwd = front.sub(back);
+    fwd.y = 0;
+    if (fwd.lengthSq() > 1e-8) return fwd.normalize();
+  }
+  return new THREE.Vector3(0, 0, 1);
+}
+
 async function loadKenneyCar(file, spec) {
   const cacheKey = spec?.id ? `${file}:${spec.id}` : file;
-  if (modelCache.has(cacheKey)) return modelCache.get(cacheKey).clone(true);
+  if (modelCache.has(cacheKey)) {
+    const clone = modelCache.get(cacheKey).clone(true);
+    clone.userData.modelForward = modelCache.get(cacheKey).userData.modelForward.clone();
+    return clone;
+  }
 
   const gltf = await gltfLoader.loadAsync(file);
-  // Kenney assets are rotated per-car-kit via `modelYaw` (catalog.js).
-  if (spec?.modelYaw != null) gltf.scene.rotation.y = spec.modelYaw;
   const root = new THREE.Group();
   root.add(gltf.scene);
 
   const box = new THREE.Box3().setFromObject(root);
   const size = box.getSize(new THREE.Vector3());
   const length = Math.max(size.x, size.z, 0.001);
-  root.scale.setScalar(4.2 / length);
+  root.scale.setScalar((spec?.modelLength ?? 4.2) / length);
 
   box.setFromObject(root);
   const lift = -box.min.y;
   for (const child of root.children) child.position.y += lift;
+
+  root.userData.modelForward = measureModelForward(root);
 
   root.traverse((o) => {
     if (!o.isMesh) return;
@@ -254,7 +321,9 @@ async function loadKenneyCar(file, spec) {
   });
 
   modelCache.set(cacheKey, root);
-  return root.clone(true);
+  const out = root.clone(true);
+  out.userData.modelForward = root.userData.modelForward.clone();
+  return out;
 }
 
 function buildFallbackCar() {
@@ -266,8 +335,13 @@ function buildFallbackCar() {
   body.position.y = 0.55;
   body.castShadow = true;
   car.add(body);
+  car.userData.modelForward = new THREE.Vector3(0, 0, 1);
   return car;
 }
+
+/** Scratch for aligning mesh nose to physics forward. */
+const _physFwd = new THREE.Vector3();
+const _modelFwd = new THREE.Vector3();
 
 function syncCarButtons() {
   const all = [
@@ -295,9 +369,77 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY);
-scene.fog = new THREE.Fog(SKY, 55, 180);
+scene.fog = new THREE.Fog(SKY, 80, 560);
 
-const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 400);
+const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 900);
+const chaseCam = new ChaseCamera(camera);
+
+let flyMode = false;
+let flySpeed = 60;
+let lookYaw = 0;
+let lookPitch = 0;
+let pointerLocked = false;
+
+function requestPointerLock() {
+  if (mode === 'drive' && document.pointerLockElement !== canvas) {
+    canvas.requestPointerLock?.();
+  }
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.();
+  } else {
+    document.exitFullscreen?.();
+  }
+}
+
+function toggleFly() {
+  flyMode = !flyMode;
+  if (flyMode) {
+    const e = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+    lookYaw = e.y;
+    lookPitch = e.x;
+    requestPointerLock();
+  } else {
+    chaseCam.reset();
+  }
+}
+
+function flyStep(dt) {
+  const i = driveInput;
+  let fwd = 0;
+  let strafe = 0;
+  let up = 0;
+  if (i.held('throttle')) fwd += 1;
+  if (i.held('brake')) fwd -= 1;
+  if (i.held('left')) strafe -= 1;
+  if (i.held('right')) strafe += 1;
+  if (i.codeHeld('Space')) up += 1;
+  if (i.codeHeld('ShiftLeft') || i.codeHeld('ShiftRight')) up -= 1;
+
+  const cp = Math.cos(lookPitch);
+  const fwdVec = new THREE.Vector3(
+    -Math.sin(lookYaw) * cp,
+    Math.sin(lookPitch),
+    -Math.cos(lookYaw) * cp,
+  );
+  const rightVec = new THREE.Vector3(Math.cos(lookYaw), 0, -Math.sin(lookYaw));
+  const speed = flySpeed;
+  camera.position.addScaledVector(fwdVec, fwd * speed * dt);
+  camera.position.addScaledVector(rightVec, strafe * speed * dt);
+  camera.position.y += up * speed * dt;
+  camera.position.y = Math.max(1.4, camera.position.y);
+  camera.quaternion.setFromEuler(new THREE.Euler(lookPitch, lookYaw, 0, 'YXZ'));
+}
+
+function onMouseMove(e) {
+  if (mode !== 'drive' && mode !== 'preview') return;
+  if (mode === 'paused' || mapOpen) return;
+  if (e.movementX === 0 && e.movementY === 0) return;
+  lookYaw -= e.movementX * 0.004;
+  lookPitch = clamp(lookPitch - e.movementY * 0.003, -0.18, 0.42);
+}
 
 const hemi = new THREE.HemisphereLight(0xa9d2ff, 0x3d5058, 0.55);
 scene.add(hemi);
@@ -319,8 +461,43 @@ scene.add(sun.target);
 
 const skySystem = new SkySystem(scene, sun, hemi, ambient);
 
+function applyGfx() {
+  const pr = GFX_RES[gfx.resIdx] ?? 1;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pr));
+  const dist = GFX_DIST[gfx.distIdx] ?? 500;
+  skySystem.fogFar = dist;
+  if (scene.fog) {
+    scene.fog.near = dist * 0.16;
+    scene.fog.far = dist;
+  }
+  camera.far = dist + 140;
+  camera.updateProjectionMatrix();
+  const shadowsOn = GFX_SHADOWS[gfx.shadowIdx] !== false;
+  renderer.shadowMap.enabled = shadowsOn;
+  sun.castShadow = shadowsOn;
+  const tm = TIME_MODES[gfx.timeIdx] ?? TIME_MODES[2];
+  skySystem.setMode(tm.mode);
+  if (tm.cycle) skySystem.setCycleMinutes(tm.cycle);
+}
+
+applyGfx();
+settingsList?.querySelectorAll('.settings-row').forEach((row, i) => {
+  row.addEventListener('click', () => {
+    if (mode !== 'paused' || pauseView !== 'settings') return;
+    if (pauseSettingsIndex === i) {
+      gfx = cycleSetting(gfx, i, 1);
+      saveGfx(gfx);
+      applyGfx();
+    } else {
+      pauseSettingsIndex = i;
+    }
+    refreshPauseUi();
+  });
+});
+
 const world = new World();
 scene.add(world.stage);
+scene.add(world.horizon);
 
 const state = {
   s: 40,
@@ -403,18 +580,6 @@ const SUBSTEP = 1 / 120;
 const MAX_SUBSTEPS = 8;
 let _simAcc = 0;
 
-const _camPos = new THREE.Vector3();
-const _camLook = new THREE.Vector3();
-const _camCur = new THREE.Vector3();
-const _lookCur = new THREE.Vector3();
-let camInit = false;
-// Camera yaw that trails the car's heading at YAW_RATE rad/s (OpenCity-style).
-// Blending 60 % road-tangent + 40 % car-heading keeps road curves smooth while
-// letting the camera visibly follow the car through a steering input so the car
-// looks like it's *turning* instead of *spinning* in front of a locked lens.
-let camYaw = 0;
-let camYawReady = false;
-
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -433,23 +598,22 @@ function driverInput() {
 }
 
 function playerWorld(f) {
-  // Face mostly along the road; only a light nose from steer + slip.
-  // Camera uses road tangent so curves don't swing the whole world.
-  const nose = -(state.steerAngle * 0.35 + state.yawOffset * 0.25);
-  const yaw = f.heading + nose;
+  const heading = f.heading + state.yawOffset;
+  const longVel = state.speed * Math.cos(state.yawOffset);
+  const latVel = state.speed * Math.sin(state.yawOffset);
   return {
     x: f.nx * state.lateral,
     y: ROAD_SURFACE + 0.02,
     z: f.nz * state.lateral,
-    yaw,
-    roll: state.rollLoad * 0.12,
-    pitch: state.pitchLoad * 0.04,
+    heading,
+    roll: state.rollLoad * 0.03,
+    pitch: 0,
     tx: f.tx,
     tz: f.tz,
-    // Car's own forward direction (heading-aligned, not road-aligned).
-    // Used by the camera to blend in the car's steering for the yaw-lag effect.
-    carTx: Math.cos(yaw),
-    carTz: Math.sin(yaw),
+    carTx: Math.cos(heading),
+    carTz: Math.sin(heading),
+    velTx: longVel * f.tx + latVel * f.nx,
+    velTz: longVel * f.tz + latVel * f.nz,
   };
 }
 
@@ -457,64 +621,22 @@ function applyCarTransform(f) {
   const frame = f ?? world.highway.at(state.s);
   const p = playerWorld(frame);
   car.position.set(p.x, p.y, p.z);
-  car.rotation.order = 'YXZ';
-  car.rotation.set(p.pitch, p.yaw, p.roll);
-}
 
-function updateCamera(p, dt) {
-  const speedKmh = Math.abs(state.speed) * 3.6;
-  const speedT = clamp(speedKmh / 250, 0, 1);
-  const camDist = 11 + 5 * speedT * speedT;
-  const camH = 5;
-  const look = 14;
-
-  // Build a target yaw by blending road tangent (stable through road bends)
-  // with the car's own heading (responsive to player steering).
-  // 60 % road + 40 % car — enough to remove the "spinning wheel" look without
-  // swinging the camera aggressively during lane changes.
-  const blendX = p.tx * 0.6 + p.carTx * 0.4;
-  const blendZ = p.tz * 0.6 + p.carTz * 0.4;
-  const targetYaw = Math.atan2(blendZ, blendX);
-
-  if (!camYawReady) {
-    camYaw = targetYaw;
-    camYawReady = true;
+  _physFwd.set(p.carTx, 0, p.carTz).normalize();
+  const mf = car.userData.modelForward;
+  if (mf && mf.lengthSq() > 1e-8) {
+    _modelFwd.copy(mf).normalize();
+    car.quaternion.setFromUnitVectors(_modelFwd, _physFwd);
+  } else {
+    car.rotation.order = 'YXZ';
+    car.rotation.set(0, -p.heading + Math.PI / 2, 0);
   }
-
-  // Yaw lag: camera boom trails at 3.2 rad/s (OpenCity YAW_RATE).
-  // Capped at ±0.26 rad so the car never fully leaves the frame.
-  let d = targetYaw - camYaw;
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  d = clamp(d, -0.26, 0.26);
-  camYaw += d * (1 - Math.exp(-3.2 * dt));
-
-  const cTx = Math.cos(camYaw);
-  const cTz = Math.sin(camYaw);
-
-  _camPos.set(p.x - cTx * camDist, p.y + camH, p.z - cTz * camDist);
-  _camLook.set(p.x + cTx * look, p.y + 1.0, p.z + cTz * look);
-
-  if (!camInit) {
-    _camCur.copy(_camPos);
-    _lookCur.copy(_camLook);
-    camInit = true;
-  }
-
-  const smooth = 1 - Math.exp(-5.5 * dt);
-  _camCur.lerp(_camPos, smooth);
-  _lookCur.lerp(_camLook, smooth);
-  camera.position.copy(_camCur);
-  camera.lookAt(_lookCur);
-
-  // Speed FOV (opencity: 62°→80° between 0 and ~200 km/h)
-  camera.fov = damp(camera.fov, 62 + 18 * speedT * speedT, 3.0, dt);
-  camera.updateProjectionMatrix();
+  if (p.roll) car.rotateZ(p.roll);
 }
 
 function updateHud() {
   speedEl.textContent = String(Math.round(Math.abs(state.speed) * 3.6));
-  gearEl.textContent = `GEAR ${gearForSpeed()}`;
+  gearEl.textContent = state.speed < -0.5 ? 'REVERSE' : `GEAR ${gearForSpeed()}`;
   if (frameCounter % 4 === 0) drawMinimap(minimapCanvas, world.highway, state);
   if (mapOpen) drawFullMap(fullmapCanvas, world.highway, state);
 }
@@ -526,49 +648,49 @@ function simulateDrive(dt) {
   const di = driverInput();
 
   while (_simAcc >= SUBSTEP && n < MAX_SUBSTEPS) {
-    driveOut = stepVehicle(state, di, SUBSTEP, activeCarSpec);
+    driveOut = stepVehicle(state, di, SUBSTEP, activeCarSpec, ROAD_HALF);
     _simAcc -= SUBSTEP;
     n++;
   }
   if (n >= MAX_SUBSTEPS) _simAcc = 0;
 
-  const rollTarget = clamp(-driveOut.slipAngle * 2.4 - state.steerAngle * 0.35, -1, 1);
-  state.rollLoad = damp(state.rollLoad, rollTarget, 4.0, dt);
+  const rollTarget = clamp(-driveOut.slipAngle * 0.4 + state.steerAngle * 0.08, -0.25, 0.25);
+  state.rollLoad = damp(state.rollLoad, rollTarget, 2.5, dt);
 
   const targetPitch =
-    state.brake > 0.1 ? -0.55 : state.throttle > 0.1 ? 0.28 : 0;
-  state.pitchLoad = damp(state.pitchLoad, targetPitch, 3.5, dt);
-
-  const edge = ROAD_HALF - 0.8;
-  const over = Math.abs(state.lateral) - edge;
-  if (over > 0) {
-    state.lateral = Math.sign(state.lateral || 1) * edge;
-    state.yawOffset = damp(state.yawOffset, 0, 6, dt);
-    state.vy = damp(state.vy, 0, 8, dt);
-    state.r = damp(state.r, 0, 8, dt);
-    state.speed *= Math.max(0, 1 - over * 8 * dt);
-  }
-
-  state.lateral = clamp(state.lateral, -ROAD_HALF, ROAD_HALF);
+    state.brake > 0.1 ? -0.15 : state.throttle > 0.1 ? 0.08 : 0;
+  state.pitchLoad = damp(state.pitchLoad, targetPitch, 2.5, dt);
 }
 
 function syncWorld(dt) {
   const f = world.highway.at(state.s);
   applyCarTransform(f);
-  world.recenter(f.x, f.y, f.z);
+  world.recenter(f.x, 0, f.z);
   world.sync(state.s);
 
   const p = playerWorld(f);
   const sky = skySystem.update(dt, p);
   tickWater(dt, sky.night);
-  // Highway-space camera so lamp culling matches stored bulb coords.
   world.setNightLevel(sky.night, { x: f.x + p.x, y: f.y + p.y, z: f.z + p.z });
-  updateCamera(p, dt);
+
+  if (flyMode) {
+    flyStep(dt);
+  } else {
+    chaseCam.update(p, dt, {
+      lookBack: driveInput.lookBack,
+      orbitYaw: pointerLocked ? lookYaw : 0,
+      orbitPitch: pointerLocked ? lookPitch : 0,
+      speed: state.speed,
+    });
+  }
 }
 
 function update(dt) {
   frameCounter++;
   driveInput.update();
+
+  if (driveInput.consumeFullscreenToggle()) toggleFullscreen();
+  if (driveInput.consumeFlyToggle()) toggleFly();
 
   if (driveInput.skipPressed && mode === 'preview') startDrive();
   if (driveInput.resetPressed && mode === 'drive') restartDrive();
@@ -583,13 +705,13 @@ function update(dt) {
     state.r = 0;
     state.yawOffset = 0;
     state.lateral = 0;
-    stepVehicle(state, { steer: 0, throttle: 0, brake: 0, handbrake: 0 }, dt, activeCarSpec);
+    stepVehicle(state, { steer: 0, throttle: 0, brake: 0, handbrake: 0 }, dt, activeCarSpec, ROAD_HALF);
     syncWorld(dt);
     return;
   }
 
   if (mode === 'drive') {
-    simulateDrive(dt);
+    if (!flyMode) simulateDrive(dt);
     syncWorld(dt);
     updateHud();
     return;
@@ -620,6 +742,14 @@ function tick() {
 async function boot() {
   resize();
   window.addEventListener('resize', resize);
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('pointerlockchange', () => {
+    pointerLocked = document.pointerLockElement === canvas;
+  });
+  canvas.addEventListener('click', () => {
+    canvas.focus({ preventScroll: true });
+    if (mode === 'drive' && !flyMode) requestPointerLock();
+  });
   tick();
 
   try {
@@ -632,7 +762,7 @@ async function boot() {
     world.sync(state.s);
     const start = world.highway.at(state.s);
     applyCarTransform(start);
-    world.recenter(start.x, start.y, start.z);
+    world.recenter(start.x, 0, start.z);
 
     setLoading(1, 'Ready!');
     await new Promise((r) => setTimeout(r, 350));

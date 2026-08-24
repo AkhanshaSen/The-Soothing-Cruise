@@ -57,21 +57,16 @@ export class Highway {
     let p = this.points[this.points.length - 1];
     while (p.s < sTarget) {
       const s = p.s + STEP;
-      // Alternating left/right meanders (~280m and ~570m) so the map
-      // shows clear S-curves instead of one long gentle arc.
+      // Very long, gentle curves — stable at 150 km/h, no twitchy fbm.
       const bend =
-        0.019 * Math.sin(s * 0.0224) +
-        0.011 * Math.sin(s * 0.011 + 1.15) +
-        0.008 * Math.sin(s * 0.031 + 2.4) +
-        0.010 * fbm1(this.seed, s * 0.0018);
+        0.0036 * Math.sin(s * 0.0055) +
+        0.0020 * Math.sin(s * 0.0024 + 1.15);
       const heading = p.heading + bend * STEP;
-      const y =
-        2.4 * fbm1(this.seed + 11, s * 0.00028) +
-        1.4 * Math.sin(s * 0.0011) +
-        0.6 * Math.sin(s * 0.0033);
+      // Flat coastal cruise — elevation/pitch caused recenter bob and jerky ride.
+      const y = 0;
       const x = p.x + Math.cos(heading) * STEP;
       const z = p.z + Math.sin(heading) * STEP;
-      const pitch = Math.atan2(y - p.y, STEP);
+      const pitch = 0;
       p = { s, x, y, z, heading, pitch, bend };
       this.points.push(p);
     }
@@ -98,5 +93,43 @@ export class Highway {
       nx: -Math.sin(heading),
       nz: Math.cos(heading),
     };
+  }
+
+  /** Closest point on the highway centreline — keeps the car glued to the ribbon. */
+  project(x, z, sHint = 0) {
+    this.generateUntil(sHint + 240);
+    let bestS = Math.max(0, sHint);
+    let bestD = Infinity;
+
+    for (let s = Math.max(0, sHint - 120); s <= sHint + 120; s += 2) {
+      const f = this.at(s);
+      const dx = x - f.x;
+      const dz = z - f.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestD) {
+        bestD = d;
+        bestS = s;
+      }
+    }
+
+    for (let s = bestS - 4; s <= bestS + 4; s += 0.25) {
+      const ss = Math.max(0, s);
+      const f = this.at(ss);
+      const dx = x - f.x;
+      const dz = z - f.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestD) {
+        bestD = d;
+        bestS = ss;
+      }
+    }
+
+    const f = this.at(bestS);
+    const dx = x - f.x;
+    const dz = z - f.z;
+    const lateral = dx * f.nx + dz * f.nz;
+    const along = dx * f.tx + dz * f.tz;
+    const sOut = Math.max(0, bestS + along);
+    return { s: sOut, lateral, frame: this.at(sOut) };
   }
 }
