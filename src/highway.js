@@ -57,10 +57,13 @@ export class Highway {
     let p = this.points[this.points.length - 1];
     while (p.s < sTarget) {
       const s = p.s + STEP;
+      // Alternating left/right meanders (~280m and ~570m) so the map
+      // shows clear S-curves instead of one long gentle arc.
       const bend =
-        0.022 * fbm1(this.seed, s * 0.00075) +
-        0.009 * Math.sin(s * 0.00055) +
-        0.006 * Math.sin(s * 0.0016 + 1.2);
+        0.019 * Math.sin(s * 0.0224) +
+        0.011 * Math.sin(s * 0.011 + 1.15) +
+        0.008 * Math.sin(s * 0.031 + 2.4) +
+        0.010 * fbm1(this.seed, s * 0.0018);
       const heading = p.heading + bend * STEP;
       const y =
         2.4 * fbm1(this.seed + 11, s * 0.00028) +

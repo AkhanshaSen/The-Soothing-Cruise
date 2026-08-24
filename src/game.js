@@ -4,8 +4,11 @@ import { World, ROAD_HALF, ROAD_SURFACE, SKY } from './world.js';
 import { drawMinimap, drawFullMap } from './minimap.js';
 import { updatePauseMenu, handlePauseNav, PAUSE_ACTIONS } from './ui/pause.js';
 import { SkySystem } from './sky.js';
-import { updateDrive } from './vehicle/drive.js';
+import { stepVehicle } from './vehicle/drive.js';
+import { tickWater } from './water.js';
 import { CARS } from './vehicle/catalog.js';
+import { Input, driverInputFrom } from './core/input.js';
+import { DomTouchBridge, bindDriveButtons } from './ui/dom-touch.js';
 
 // --- DOM ---
 const canvas = document.getElementById('game');
@@ -33,104 +36,12 @@ const timeModeSelect = document.getElementById('time-mode');
 const cycleMinSelect = document.getElementById('cycle-min');
 
 const uiRoot = document.body;
-const input = { forward: false, back: false, left: false, right: false };
+const driveInput = new Input();
+const touchBridge = new DomTouchBridge();
+bindDriveButtons(driveInput, touchBridge);
 
-function bindButton(id, key) {
-  const btn = document.getElementById(id);
-  const press = () => {
-    input[key] = true;
-    btn.classList.add('pressed');
-  };
-  const release = () => {
-    input[key] = false;
-    btn.classList.remove('pressed');
-  };
-  btn.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    press();
-  });
-  btn.addEventListener('pointerup', release);
-  btn.addEventListener('pointerleave', release);
-  btn.addEventListener('pointercancel', release);
-}
-
-bindButton('btn-forward', 'forward');
-bindButton('btn-back', 'back');
-bindButton('btn-left', 'left');
-bindButton('btn-right', 'right');
-
-const keys = {
-  forward: false,
-  back: false,
-  left: false,
-  right: false,
-  arrowUp: false,
-  arrowDown: false,
-  pause: false,
-  map: false,
-  reset: false,
-  enter: false,
-};
-
-let pauseEdge = false;
-let mapEdge = false;
-let resetEdge = false;
-let menuUpEdge = false;
-let menuDownEdge = false;
-let menuEnterEdge = false;
 let pauseIndex = 0;
 let pauseView = 'menu';
-
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'ArrowUp' || e.code === 'KeyW') {
-    input.forward = true;
-    keys.forward = true;
-  }
-  if (e.code === 'ArrowDown' || e.code === 'KeyS') {
-    input.back = true;
-    keys.back = true;
-  }
-  if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
-    input.left = true;
-    keys.left = true;
-  }
-  if (e.code === 'ArrowRight' || e.code === 'KeyD') {
-    input.right = true;
-    keys.right = true;
-  }
-  if (e.code === 'ArrowUp') keys.arrowUp = true;
-  if (e.code === 'ArrowDown') keys.arrowDown = true;
-  if (e.code === 'Escape') keys.pause = true;
-  if (e.code === 'KeyM') keys.map = true;
-  if (e.code === 'KeyR') keys.reset = true;
-  if (e.code === 'Enter') keys.enter = true;
-  if (e.code === 'Enter' && mode === 'preview') startDrive();
-});
-
-window.addEventListener('keyup', (e) => {
-  if (e.code === 'ArrowUp' || e.code === 'KeyW') {
-    input.forward = false;
-    keys.forward = false;
-  }
-  if (e.code === 'ArrowDown' || e.code === 'KeyS') {
-    input.back = false;
-    keys.back = false;
-  }
-  if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
-    input.left = false;
-    keys.left = false;
-  }
-  if (e.code === 'ArrowRight' || e.code === 'KeyD') {
-    input.right = false;
-    keys.right = false;
-  }
-  if (e.code === 'ArrowUp') keys.arrowUp = false;
-  if (e.code === 'ArrowDown') keys.arrowDown = false;
-  if (e.code === 'Escape') keys.pause = false;
-  if (e.code === 'KeyM') keys.map = false;
-  if (e.code === 'KeyR') keys.reset = false;
-  if (e.code === 'Enter') keys.enter = false;
-});
 
 function setLoading(progress, label) {
   loadingFill.style.width = `${Math.round(progress * 100)}%`;
@@ -227,23 +138,32 @@ function restartDrive() {
   state.yawOffset = 0;
   state.steerAngle = 0;
   state.steerVel = 0;
+  state.vy = 0;
+  state.r = 0;
+  state.gear = 0;
+  state.rpm = 1050;
+  state.throttle = 0;
+  state.brake = 0;
+  state.handbrake = 0;
   state.rollLoad = 0;
   state.pitchLoad = 0;
   state.speed = 0;
+  _simAcc = 0;
   const start = world.highway.at(state.s);
   applyCarTransform(start);
   world.recenter(start.x, start.y, start.z);
   world.sync(state.s);
   camInit = false;
+  camYawReady = false;
   setPaused(false);
 }
 
 function handlePauseInput() {
   const result = handlePauseNav(uiRoot, {
-    up: keys.arrowUp && !menuUpEdge,
-    down: keys.arrowDown && !menuDownEdge,
-    confirm: keys.enter && !menuEnterEdge,
-    back: keys.pause && !pauseEdge,
+    up: driveInput.menuUpPressed,
+    down: driveInput.menuDownPressed,
+    confirm: driveInput.confirmPressed,
+    back: driveInput.pausePressed,
     index: pauseIndex,
     view: pauseView,
     onAction: runPauseAction,
@@ -255,10 +175,6 @@ function handlePauseInput() {
 
   if (result.index !== pauseIndex) pauseIndex = result.index;
   if (result.view !== pauseView) pauseView = result.view;
-
-  menuUpEdge = keys.arrowUp;
-  menuDownEdge = keys.arrowDown;
-  menuEnterEdge = keys.enter;
 }
 
 pauseGarage.addEventListener('click', (e) => {
@@ -269,7 +185,7 @@ pauseGarage.addEventListener('click', (e) => {
 });
 
 function handleMenuKeys() {
-  if (keys.pause && !pauseEdge) {
+  if (driveInput.pausePressed) {
     if (mapOpen) setMapOpen(false);
     else if (mode === 'paused' && pauseView !== 'menu') {
       pauseView = 'menu';
@@ -277,13 +193,11 @@ function handleMenuKeys() {
     } else if (mode === 'drive') setPaused(true);
     else if (mode === 'paused') setPaused(false);
   }
-  pauseEdge = keys.pause;
 
-  if (keys.map && !mapEdge) {
+  if (driveInput.mapPressed) {
     if (mode === 'drive' || mode === 'map') setMapOpen(!mapOpen);
     else if (mode === 'paused') setMapOpen(true);
   }
-  mapEdge = keys.map;
 
   if (mode === 'paused') handlePauseInput();
 }
@@ -414,6 +328,13 @@ const state = {
   yawOffset: 0,
   steerAngle: 0,
   steerVel: 0,
+  vy: 0,
+  r: 0,
+  gear: 0,
+  rpm: 1050,
+  throttle: 0,
+  brake: 0,
+  handbrake: 0,
   rollLoad: 0,
   pitchLoad: 0,
   speed: 0,
@@ -475,16 +396,24 @@ for (const model of CAR_MODELS) {
   pauseGarage.appendChild(pauseBtn);
 }
 
-const MAX_SPEED = 125;
-const CRUISE_ACCEL = 35;
-const BRAKE_FORCE = 75;
 const PREVIEW_SPEED = 22;
+
+/** OpenCity fixed physics rate — input sampled once per frame, car stepped at 120 Hz. */
+const SUBSTEP = 1 / 120;
+const MAX_SUBSTEPS = 8;
+let _simAcc = 0;
 
 const _camPos = new THREE.Vector3();
 const _camLook = new THREE.Vector3();
 const _camCur = new THREE.Vector3();
 const _lookCur = new THREE.Vector3();
 let camInit = false;
+// Camera yaw that trails the car's heading at YAW_RATE rad/s (OpenCity-style).
+// Blending 60 % road-tangent + 40 % car-heading keeps road curves smooth while
+// letting the camera visibly follow the car through a steering input so the car
+// looks like it's *turning* instead of *spinning* in front of a locked lens.
+let camYaw = 0;
+let camYawReady = false;
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
@@ -494,27 +423,33 @@ function damp(cur, target, rate, dt) {
   return cur + (target - cur) * (1 - Math.exp(-rate * dt));
 }
 
-function gearForSpeed(speed) {
-  const kmh = Math.abs(speed) * 3.6;
-  if (kmh < 40) return 1;
-  if (kmh < 90) return 2;
-  if (kmh < 160) return 3;
-  if (kmh < 260) return 4;
-  if (kmh < 360) return 5;
-  return 6;
+function gearForSpeed() {
+  return (state.gear ?? 0) + 1;
+}
+
+/** OpenCity main.js driverInput() — same axes every substep in a frame. */
+function driverInput() {
+  return driverInputFrom(driveInput);
 }
 
 function playerWorld(f) {
-  const carYaw = f.heading + state.yawOffset;
+  // Face mostly along the road; only a light nose from steer + slip.
+  // Camera uses road tangent so curves don't swing the whole world.
+  const nose = -(state.steerAngle * 0.35 + state.yawOffset * 0.25);
+  const yaw = f.heading + nose;
   return {
     x: f.nx * state.lateral,
     y: ROAD_SURFACE + 0.02,
     z: f.nz * state.lateral,
-    yaw: carYaw,
+    yaw,
     roll: state.rollLoad * 0.12,
     pitch: state.pitchLoad * 0.04,
-    tx: Math.cos(carYaw),
-    tz: Math.sin(carYaw),
+    tx: f.tx,
+    tz: f.tz,
+    // Car's own forward direction (heading-aligned, not road-aligned).
+    // Used by the camera to blend in the car's steering for the yaw-lag effect.
+    carTx: Math.cos(yaw),
+    carTz: Math.sin(yaw),
   };
 }
 
@@ -532,8 +467,33 @@ function updateCamera(p, dt) {
   const camDist = 11 + 5 * speedT * speedT;
   const camH = 5;
   const look = 14;
-  _camPos.set(p.x - p.tx * camDist, p.y + camH, p.z - p.tz * camDist);
-  _camLook.set(p.x + p.tx * look, p.y + 1.0, p.z + p.tz * look);
+
+  // Build a target yaw by blending road tangent (stable through road bends)
+  // with the car's own heading (responsive to player steering).
+  // 60 % road + 40 % car — enough to remove the "spinning wheel" look without
+  // swinging the camera aggressively during lane changes.
+  const blendX = p.tx * 0.6 + p.carTx * 0.4;
+  const blendZ = p.tz * 0.6 + p.carTz * 0.4;
+  const targetYaw = Math.atan2(blendZ, blendX);
+
+  if (!camYawReady) {
+    camYaw = targetYaw;
+    camYawReady = true;
+  }
+
+  // Yaw lag: camera boom trails at 3.2 rad/s (OpenCity YAW_RATE).
+  // Capped at ±0.26 rad so the car never fully leaves the frame.
+  let d = targetYaw - camYaw;
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  d = clamp(d, -0.26, 0.26);
+  camYaw += d * (1 - Math.exp(-3.2 * dt));
+
+  const cTx = Math.cos(camYaw);
+  const cTz = Math.sin(camYaw);
+
+  _camPos.set(p.x - cTx * camDist, p.y + camH, p.z - cTz * camDist);
+  _camLook.set(p.x + cTx * look, p.y + 1.0, p.z + cTz * look);
 
   if (!camInit) {
     _camCur.copy(_camPos);
@@ -554,43 +514,29 @@ function updateCamera(p, dt) {
 
 function updateHud() {
   speedEl.textContent = String(Math.round(Math.abs(state.speed) * 3.6));
-  gearEl.textContent = `GEAR ${gearForSpeed(state.speed)}`;
+  gearEl.textContent = `GEAR ${gearForSpeed()}`;
   if (frameCounter % 4 === 0) drawMinimap(minimapCanvas, world.highway, state);
   if (mapOpen) drawFullMap(fullmapCanvas, world.highway, state);
 }
 
 function simulateDrive(dt) {
-  let throttle = 0;
-  if (input.forward) throttle += 1;
-  if (input.back) throttle -= 1;
+  _simAcc += dt;
+  let n = 0;
+  let driveOut = { steerAngle: 0, slipAngle: 0 };
+  const di = driverInput();
 
-  const speed = Math.abs(state.speed);
-  const speedRatio = clamp(speed / MAX_SPEED, 0, 1);
-  const accelScale = 1 - speedRatio * 0.82;
-  const drag = 0.6 + speedRatio * 3.5 + speed * speed * 0.0035;
-
-  if (throttle > 0) {
-    state.speed += CRUISE_ACCEL * accelScale * dt;
-  } else if (throttle < 0) {
-    if (state.speed > 3) state.speed -= BRAKE_FORCE * dt;
-    else state.speed -= CRUISE_ACCEL * 0.35 * dt;
-  } else {
-    const sign = Math.sign(state.speed);
-    state.speed = Math.max(0, speed - drag * dt) * sign;
+  while (_simAcc >= SUBSTEP && n < MAX_SUBSTEPS) {
+    driveOut = stepVehicle(state, di, SUBSTEP, activeCarSpec);
+    _simAcc -= SUBSTEP;
+    n++;
   }
+  if (n >= MAX_SUBSTEPS) _simAcc = 0;
 
-  // Avoid reverse in this simplified road streamer (keeps `s` stable for highway.at()).
-  state.speed = clamp(state.speed, 0, MAX_SPEED);
+  const rollTarget = clamp(-driveOut.slipAngle * 2.4 - state.steerAngle * 0.35, -1, 1);
+  state.rollLoad = damp(state.rollLoad, rollTarget, 4.0, dt);
 
-  const steerIn = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-  updateDrive(state, { steer: steerIn }, dt, activeCarSpec);
-
-  // Body roll: proportional to centripetal force proxy
-  const lateralA = state.steerAngle * Math.abs(state.speed);
-  state.rollLoad = damp(state.rollLoad, clamp(lateralA * 0.08, -1, 1), 4.0, dt);
-
-  // Pitch: nose dips under braking, squats under throttle
-  const targetPitch = throttle < 0 ? -0.55 : throttle > 0 ? 0.28 : 0;
+  const targetPitch =
+    state.brake > 0.1 ? -0.55 : state.throttle > 0.1 ? 0.28 : 0;
   state.pitchLoad = damp(state.pitchLoad, targetPitch, 3.5, dt);
 
   const edge = ROAD_HALF - 0.8;
@@ -598,6 +544,8 @@ function simulateDrive(dt) {
   if (over > 0) {
     state.lateral = Math.sign(state.lateral || 1) * edge;
     state.yawOffset = damp(state.yawOffset, 0, 6, dt);
+    state.vy = damp(state.vy, 0, 8, dt);
+    state.r = damp(state.r, 0, 8, dt);
     state.speed *= Math.max(0, 1 - over * 8 * dt);
   }
 
@@ -612,24 +560,30 @@ function syncWorld(dt) {
 
   const p = playerWorld(f);
   const sky = skySystem.update(dt, p);
-  world.setNightLevel(sky.night, p);
+  tickWater(dt, sky.night);
+  // Highway-space camera so lamp culling matches stored bulb coords.
+  world.setNightLevel(sky.night, { x: f.x + p.x, y: f.y + p.y, z: f.z + p.z });
   updateCamera(p, dt);
 }
 
 function update(dt) {
   frameCounter++;
-  handleMenuKeys();
+  driveInput.update();
 
-  if (keys.reset && !resetEdge && mode === 'drive') restartDrive();
-  resetEdge = keys.reset;
+  if (driveInput.skipPressed && mode === 'preview') startDrive();
+  if (driveInput.resetPressed && mode === 'drive') restartDrive();
+
+  handleMenuKeys();
 
   if (mode === 'preview') {
     state.speed = PREVIEW_SPEED;
     state.steerAngle = 0;
     state.steerVel = 0;
+    state.vy = 0;
+    state.r = 0;
     state.yawOffset = 0;
     state.lateral = 0;
-    updateDrive(state, { steer: 0 }, dt, activeCarSpec);
+    stepVehicle(state, { steer: 0, throttle: 0, brake: 0, handbrake: 0 }, dt, activeCarSpec);
     syncWorld(dt);
     return;
   }
