@@ -22,6 +22,7 @@ export class SkySystem {
     /** @type {'dynamic' | 'day' | 'sunset' | 'night' | 'dawn'} */
     this.mode = 'dynamic';
     this.cycleMinutes = 4;
+    this.fogFar = 500;
   }
 
   setMode(mode) {
@@ -65,8 +66,8 @@ export class SkySystem {
     this.scene.background.setHex(sky);
     if (this.scene.fog) {
       this.scene.fog.color.setHex(fog);
-      this.scene.fog.near = 45 + night * 25 + day * 35;
-      this.scene.far = 120 + day * 70 + (1 - night) * 40;
+      this.scene.fog.near = this.fogFar * 0.16;
+      this.scene.fog.far = this.fogFar;
     }
 
     const sunWarm = 0xffe6bd;

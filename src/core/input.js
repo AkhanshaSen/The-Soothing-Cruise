@@ -1,6 +1,6 @@
 /**
- * Keyboard, gamepad, and on-screen touch — four analogue axes, no smoothing.
- * Ported from OpenCity src/core/input.js (smoothing lives in the car step).
+ * OpenCity control bindings — keyboard, mouse orbit, gamepad.
+ * Raw axes; steering smoothing lives in stepVehicle().
  */
 const KEYS = {
   left: ['ArrowLeft', 'KeyA'],
@@ -8,10 +8,11 @@ const KEYS = {
   throttle: ['ArrowUp', 'KeyW'],
   brake: ['ArrowDown', 'KeyS'],
   handbrake: ['Space'],
-  pause: ['Escape'],
-  map: ['KeyM'],
+  look: ['KeyC'],
   reset: ['KeyR'],
   skip: ['Enter', 'NumpadEnter'],
+  pause: ['Escape'],
+  map: ['KeyM'],
   menuUp: ['ArrowUp', 'KeyW'],
   menuDown: ['ArrowDown', 'KeyS'],
   menuLeft: ['ArrowLeft', 'KeyA'],
@@ -55,16 +56,18 @@ export class Input {
     this.throttle = 0;
     this.brake = 0;
     this.handbrake = 0;
+    this.lookBack = false;
     this.resetPressed = false;
     this.skipPressed = false;
     this.pausePressed = false;
     this.mapPressed = false;
+    this.fullscreenToggle = false;
+    this.flyToggle = false;
     this.menuUpPressed = false;
     this.menuDownPressed = false;
     this.menuLeftPressed = false;
     this.menuRightPressed = false;
     this.confirmPressed = false;
-    /** @type {import('../ui/dom-touch.js').DomTouchBridge | null} */
     this.touch = null;
     this._pressedThisFrame = new Set();
     this._padWas = [];
@@ -74,6 +77,18 @@ export class Input {
     this._onDown = (e) => {
       if (e.repeat) return;
       this.down.add(e.code);
+
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'KeyC') {
+        e.preventDefault();
+        this.flyToggle = true;
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.code === 'KeyF' || e.key === 'f')) {
+        e.preventDefault();
+        this.fullscreenToggle = true;
+        return;
+      }
+
       this._pressedThisFrame.add(e.code);
       if (Object.values(KEYS).some((list) => list.includes(e.code))) e.preventDefault();
     };
@@ -100,6 +115,10 @@ export class Input {
     return KEYS[name].some((k) => this._pressedThisFrame.has(k));
   }
 
+  codeHeld(code) {
+    return this.down.has(code);
+  }
+
   update() {
     const pad = pickPad();
 
@@ -107,8 +126,11 @@ export class Input {
     let thr = 0;
     let brk = 0;
     let hb = 0;
-    if (this.held('left')) steerWant -= 1;
-    if (this.held('right')) steerWant += 1;
+
+    // A / left = turn right on the visual mesh, D / right = turn left
+    // (Kenney nose vs road-frame yaw is 180° apart — flip keys, not the model).
+    if (this.held('left')) steerWant += 1;
+    if (this.held('right')) steerWant -= 1;
     if (this.held('throttle')) thr = 1;
     if (this.held('brake')) brk = 1;
     if (this.held('handbrake')) hb = 1;
@@ -122,24 +144,17 @@ export class Input {
     if (pad) {
       const ax = pad.axes[0] || 0;
       const dz = Math.abs(ax) < 0.14 ? 0 : (ax - Math.sign(ax) * 0.14) / 0.86;
-      if (dz) steerWant = Math.sign(dz) * dz * dz;
+      if (dz) steerWant = -Math.sign(dz) * dz * dz;
       thr = Math.max(thr, level(PAD.r2));
       brk = Math.max(brk, level(PAD.l2));
       hb = Math.max(hb, level(PAD.south));
-    }
-
-    const touch = this.touch;
-    if (touch?.live) {
-      if (touch.steer !== 0) steerWant = touch.steer;
-      thr = Math.max(thr, touch.throttle);
-      brk = Math.max(brk, touch.brake);
-      hb = Math.max(hb, touch.handbrake);
     }
 
     this.steer = steerWant;
     this.throttle = thr;
     this.brake = brk;
     this.handbrake = hb;
+    this.lookBack = this.held('look') || !!pad?.buttons[PAD.north]?.pressed;
 
     const padEdge = (i) => !!pad?.buttons[i]?.pressed && !this._padWas[i];
 
@@ -179,9 +194,20 @@ export class Input {
     }
     this._pressedThisFrame.clear();
   }
+
+  consumeFullscreenToggle() {
+    const v = this.fullscreenToggle;
+    this.fullscreenToggle = false;
+    return v;
+  }
+
+  consumeFlyToggle() {
+    const v = this.flyToggle;
+    this.flyToggle = false;
+    return v;
+  }
 }
 
-/** OpenCity driverInput() shape passed into the car step each substep. */
 export function driverInputFrom(input) {
   return {
     steer: input.steer,

@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Outfit:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./src/style.css?v=19" />
+    <link rel="stylesheet" href="./src/style.css?v=21" />
     <script type="importmap">
       {
         "imports": {
@@ -21,7 +21,7 @@
     </script>
   </head>
   <body>
-    <canvas id="game"></canvas>
+    <canvas id="game" tabindex="0"></canvas>
 
     <!-- Loading -->
     <div id="loading" class="overlay loading-screen">
@@ -49,7 +49,7 @@
       </button>
 
       <div class="oc-bar">
-        <div class="oc-hint">▲▼◀▶ drive · WASD / arrows · Space handbrake · ESC pause · M map</div>
+        <div class="oc-hint">WASD drive · Space handbrake · C look back · Mouse orbit · R reset · Esc pause · Ctrl+F fullscreen</div>
         <div class="oc-car" id="hud-car">Sports</div>
         <div class="oc-speed">
           <span id="speed-value">0</span>
@@ -59,15 +59,6 @@
       </div>
 
       <div id="car-picker" aria-label="Choose car"></div>
-
-      <div id="controls">
-        <button type="button" id="btn-forward" aria-label="Forward">▲</button>
-        <div id="controls-row">
-          <button type="button" id="btn-left" aria-label="Left">◀</button>
-          <button type="button" id="btn-back" aria-label="Back">▼</button>
-          <button type="button" id="btn-right" aria-label="Right">▶</button>
-        </div>
-      </div>
     </div>
 
     <!-- Pause menu -->
@@ -84,27 +75,13 @@
         <p class="oc-pause-hint" id="pause-hint-main">UP / DOWN choose · ENTER select · ESC resume · click an option</p>
         <div class="oc-pause-settings hidden" id="pause-settings">
           <h2 class="oc-pause-sub">SETTINGS</h2>
-          <div class="row">
-            <span>Time of day</span>
-            <select id="time-mode">
-              <option value="dynamic" selected>Living sky (day → night)</option>
-              <option value="day">Always day</option>
-              <option value="sunset">Golden hour</option>
-              <option value="dawn">Dawn</option>
-              <option value="night">Always night</option>
-            </select>
-          </div>
-          <div class="row">
-            <span>Sky cycle</span>
-            <select id="cycle-min">
-              <option value="2">2 minutes</option>
-              <option value="4" selected>4 minutes</option>
-              <option value="8">8 minutes</option>
-            </select>
-          </div>
-          <div class="row"><span>Music</span><input id="music-vol" type="range" min="0" max="100" value="55" /></div>
-          <div class="row"><span>Engine</span><input id="sfx-vol" type="range" min="0" max="100" value="45" /></div>
-          <p class="oc-pause-hint">ESC back to menu</p>
+          <ul class="settings-list" id="settings-list">
+            <li class="settings-row selected"><span>RESOLUTION</span><span class="settings-val">&lt; 1.0X &gt;</span></li>
+            <li class="settings-row"><span>DRAW DISTANCE</span><span class="settings-val">&lt; 500 M &gt;</span></li>
+            <li class="settings-row"><span>SHADOWS</span><span class="settings-val">&lt; ON &gt;</span></li>
+            <li class="settings-row"><span>TIME OF DAY</span><span class="settings-val">&lt; DYNAMIC (3 MIN) &gt;</span></li>
+          </ul>
+          <p class="oc-pause-hint">UP / DOWN row · LEFT / RIGHT change · ESC back</p>
         </div>
         <div class="oc-pause-vehicle hidden" id="pause-vehicle">
           <h2 class="oc-pause-sub">CHANGE VEHICLE</h2>
@@ -112,7 +89,7 @@
           <p class="oc-pause-hint">Click a car · ESC back to menu</p>
         </div>
         <div class="oc-pause-controls">
-          CONTROLS: WASD / ARROWS drive · SPACE handbrake · ESC pause · M map · R reset
+          WASD / ARROWS drive · LT/RT throttle/brake · A handbrake · Y look back · SPACE drift · C look back · MOUSE orbit · R reset · ESC pause · M map · CTRL+F fullscreen · CTRL+SHIFT+C free-fly
         </div>
       </div>
     </div>
@@ -131,6 +108,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/game.js?v=19"></script>
+    <script type="module" src="./src/game.js?v=21"></script>
   </body>
 </html>

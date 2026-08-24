@@ -90,6 +90,13 @@ function placeProp(template, { x, y, z, yaw = 0, scale = 1 }) {
   const box = new THREE.Box3().setFromObject(root);
   root.position.set(x, y - box.min.y, z);
   root.rotation.y = yaw;
+  root.userData.decorative = true;
+  root.traverse((o) => {
+    o.userData.decorative = true;
+    if (o.isMesh) {
+      o.raycast = () => {};
+    }
+  });
   return root;
 }
 
@@ -113,6 +120,7 @@ export class World {
     this.houses = [];
     this.rocks = [];
     this.roadProps = [];
+    this.horizon = this.buildHorizon();
   }
 
   async init(onProgress) {
@@ -153,6 +161,57 @@ export class World {
 
   recenter(x, y, z) {
     this.stage.position.set(-x, -y, -z);
+  }
+
+  /** Distant mountains + tree ring in scene space (player stays near origin). */
+  buildHorizon() {
+    const root = new THREE.Group();
+    const rng = new Rng(9041);
+    const rock = mat(0x5a6570);
+    const rockDark = mat(0x3e4852);
+    const snow = mat(0xe4eaf0);
+    const pine = mat(0x2f5a32);
+    const pineFar = mat(0x3a6840);
+    rock.userData.owned = true;
+    rockDark.userData.owned = true;
+    snow.userData.owned = true;
+    pine.userData.owned = true;
+    pineFar.userData.owned = true;
+
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 36) * Math.PI * 2 + rng.range(-0.08, 0.08);
+      const r = rng.range(300, 430);
+      const h = rng.range(38, 92);
+      const w = rng.range(22, 48);
+      const peak = new THREE.Mesh(new THREE.ConeGeometry(w, h, 5), i % 3 === 0 ? rockDark : rock);
+      peak.position.set(Math.cos(a) * r, h * 0.38, Math.sin(a) * r);
+      peak.rotation.y = rng.range(0, Math.PI);
+      peak.castShadow = false;
+      peak.receiveShadow = false;
+      peak.userData.ownedGeo = true;
+      root.add(peak);
+      if (h > 62) {
+        const cap = new THREE.Mesh(new THREE.ConeGeometry(w * 0.28, h * 0.22, 5), snow);
+        cap.position.set(peak.position.x, peak.position.y + h * 0.28, peak.position.z);
+        cap.castShadow = false;
+        cap.userData.ownedGeo = true;
+        root.add(cap);
+      }
+    }
+
+    for (let i = 0; i < 140; i++) {
+      const a = rng.range(0, Math.PI * 2);
+      const r = rng.range(95, 250);
+      const sc = rng.range(1.4, 3.6);
+      const tree = new THREE.Mesh(new THREE.ConeGeometry(1.15 * sc, 5.2 * sc, 6), r > 180 ? pineFar : pine);
+      tree.position.set(Math.cos(a) * r, 2.4 * sc, Math.sin(a) * r);
+      tree.castShadow = false;
+      tree.receiveShadow = false;
+      tree.userData.ownedGeo = true;
+      root.add(tree);
+    }
+
+    return root;
   }
 
   sync(playerS) {
@@ -332,7 +391,7 @@ export class World {
     for (let s = s0 + 10; s < s0 + CHUNK_LEN; s += 35) {
       const f = this.highway.at(s);
       for (const side of [-1, 1]) {
-        const lat = ROAD_W / 2 + 1.5;
+        const lat = ROAD_W / 2 + 5.5;
         const x = f.x + f.nx * lat * side;
         const z = f.z + f.nz * lat * side;
         const y = f.y;
@@ -341,6 +400,8 @@ export class World {
         pole.position.set(x, y + 2.2, z);
         pole.castShadow = false;
         pole.userData.ownedGeo = true;
+        pole.userData.decorative = true;
+        pole.raycast = () => {};
         group.add(pole);
 
         const head = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.14, 0.32), lampM);
@@ -348,6 +409,8 @@ export class World {
         head.castShadow = false;
         head.receiveShadow = true;
         head.userData.ownedGeo = true;
+        head.userData.decorative = true;
+        head.raycast = () => {};
         group.add(head);
 
         // Warm amber point light — sits just under the head so it hits the road.
@@ -361,12 +424,12 @@ export class World {
   }
 
   scatterTrees(group, s0, rng) {
-    const n = this.trees.length ? 14 : 8;
+    const n = this.trees.length ? 28 : 16;
     for (let i = 0; i < n; i++) {
       const s = s0 + rng.range(4, CHUNK_LEN - 4);
       const f = this.highway.at(s);
-      const side = rng.next() < 0.9 ? 1 : -1;
-      const lat = rng.range(ROAD_W / 2 + 4, ROAD_W / 2 + 38);
+      const side = rng.next() < 0.88 ? 1 : -1;
+      const lat = rng.range(ROAD_W / 2 + 10, ROAD_W / 2 + 52);
 
       if (this.trees.length) {
         const t = this.trees[Math.floor(rng.next() * this.trees.length)];
@@ -376,7 +439,7 @@ export class World {
             y: f.y,
             z: f.z + f.nz * lat * side,
             yaw: rng.range(0, Math.PI * 2),
-            scale: rng.range(1.0, 2.1),
+            scale: rng.range(1.0, 2.2),
           }),
         );
       } else {
@@ -393,6 +456,23 @@ export class World {
         crown.position.set(trunk.position.x, f.y + 3.1 * sc, trunk.position.z);
         group.add(trunk, crown);
       }
+    }
+
+    const pine = mat(0x2f5a32);
+    pine.userData.owned = true;
+    for (let i = 0; i < 18; i++) {
+      const s = s0 + rng.range(2, CHUNK_LEN - 2);
+      const f = this.highway.at(s);
+      const side = rng.next() < 0.85 ? 1 : -1;
+      const lat = rng.range(ROAD_W / 2 + 40, ROAD_W / 2 + 78);
+      const sc = rng.range(1.6, 3.2);
+      const crown = new THREE.Mesh(new THREE.ConeGeometry(1.3 * sc, 5.4 * sc, 6), pine);
+      crown.position.set(f.x + f.nx * lat * side, f.y + 2.5 * sc, f.z + f.nz * lat * side);
+      crown.castShadow = false;
+      crown.userData.ownedGeo = true;
+      crown.userData.decorative = true;
+      crown.raycast = () => {};
+      group.add(crown);
     }
   }
 
@@ -452,7 +532,7 @@ export class World {
       const s = s0 + rng.range(8, CHUNK_LEN - 8);
       const f = this.highway.at(s);
       const side = rng.next() < 0.5 ? 1 : -1;
-      const lat = ROAD_W / 2 + 1.1;
+      const lat = ROAD_W / 2 + 6.5;
       const prop = this.roadProps[Math.floor(rng.next() * this.roadProps.length)];
       group.add(
         placeProp(prop, {

@@ -1,19 +1,12 @@
 /**
- * Vehicle step — OpenCity src/car/physics.js adapted to road-frame (s, lateral, yawOffset).
- *
- * Input each substep: { steer, throttle, brake, handbrake } in [-1,1] / [0,1].
- * No smoothing here — Input reports raw axes; steer filter + tyres live here.
+ * Highway driving — road-frame integration (s, lateral, yawOffset).
  */
 import { clamp, damp, lerp, smoothstep } from '../core/util.js';
 
-const G = 9.81;
 const MASS = 1180;
-const IZZ = 1500;
-const TYRE_B = 7.4;
-const TYRE_C = 1.5;
-const MU_BASE = 1.28;
-const STEER_IN = 20.0;
-const STEER_BACK = 31.0;
+const WB = 2.9;
+const STEER_IN = 13.0;
+const STEER_BACK = 26.0;
 const WHEEL_R = 0.5;
 
 const ENGINE = [
@@ -29,13 +22,13 @@ const FINAL = 3.9;
 const MAX_RPM = 7400;
 const IDLE_RPM = 1050;
 const DRIVE_TORQUE = 305;
-const AERO_DRAG = 0.42;
-const BRAKE_FORCE = 12200;
-const HANDBRAKE_FORCE = 3400;
+const AERO_DRAG = 0.38;
+const BRAKE_FORCE = 11800;
+const HANDBRAKE_FORCE = 3200;
+const REVERSE_FORCE = 2800;
 
-/** OpenCity steerLockAt — exported for AI / HUD if needed. */
 export function steerLockAt(speed) {
-  return lerp(0.62, 0.16, smoothstep(4, 46, speed));
+  return lerp(0.40, 0.08, smoothstep(4, 55, Math.abs(speed)));
 }
 
 function torqueAt(frac) {
@@ -47,11 +40,6 @@ function torqueAt(frac) {
   return ENGINE[ENGINE.length - 1][1];
 }
 
-function tyreForce(slip, load, mu) {
-  return mu * load * Math.sin(TYRE_C * Math.atan(TYRE_B * slip));
-}
-
-/** OpenCity _steerToward — critically damped 2nd-order wheel filter. */
 function steerToward(state, target, w, dt) {
   const d = state.steerAngle - target;
   const b = state.steerVel + w * d;
@@ -62,129 +50,130 @@ function steerToward(state, target, w, dt) {
 }
 
 function gearForSpeed(speed) {
+  const v = Math.abs(speed);
   for (let g = 0; g < GEARS.length; g++) {
-    const rpm = (Math.abs(speed) / WHEEL_R) * GEARS[g] * FINAL * 60 / (Math.PI * 2);
+    const rpm = (v / WHEEL_R) * GEARS[g] * FINAL * 60 / (Math.PI * 2);
     if (rpm < MAX_RPM * 0.94) return g;
   }
   return GEARS.length - 1;
 }
 
-/**
- * One fixed substep — call at 120 Hz (OpenCity main.js SUBSTEP = 1/120).
- * @returns {{ steerAngle: number, slipAngle: number }}
- */
-export function stepVehicle(state, input, dt, spec) {
+function perfFromSpec(spec) {
+  return {
+    power: spec?.powerScale ?? (spec?.power ?? 12500) / 12500,
+    drag: spec?.drag ?? 1,
+    steer: spec?.steerScale ?? 1,
+    drift: spec?.drift ?? 0.8,
+  };
+}
+
+export function stepVehicle(state, input, dt, spec, roadHalf = 6.4) {
+  const steerIn = clamp(input.steer ?? 0, -1, 1);
   const throttle = clamp(input.throttle ?? 0, 0, 1);
   const brake = clamp(input.brake ?? 0, 0, 1);
   const handbrake = clamp(input.handbrake ?? 0, 0, 1);
-  const steerIn = clamp(input.steer ?? 0, -1, 1);
 
-  const perfPower = (spec?.power ?? 12500) / 12500;
-  const perfDrag = 1;
-  const perfSteer = spec?.steerScale ?? 1;
-  const perfGrip = (spec?.grip ?? 13.2) / 13.2;
-  const perfDrift = spec?.drift ?? 1;
+  const perf = perfFromSpec(spec);
   const mass = spec?.mass ?? MASS;
-  const wheelbase = spec?.wheelbase ?? 2.9;
-  const A = wheelbase * 0.46;
-  const B = wheelbase * 0.54;
+  const wheelbase = spec?.wheelbase ?? WB;
+  const topMs = (spec?.top ?? 150) / 3.6;
+  const reverseMax = topMs * 0.38;
 
   if (state.steerVel == null) state.steerVel = 0;
   if (state.steerAngle == null) state.steerAngle = 0;
-  if (state.vy == null) state.vy = 0;
-  if (state.r == null) state.r = 0;
+  if (state.yawOffset == null) state.yawOffset = 0;
+  if (state.lateral == null) state.lateral = 0;
   if (state.gear == null) state.gear = 0;
   if (state.rpm == null) state.rpm = IDLE_RPM;
-  if (state.speed == null) state.speed = 0;
 
-  const speed = state.speed;
+  let speed = state.speed ?? 0;
   const absSpeed = Math.abs(speed);
 
-  // ---- steering (OpenCity: lock at speed + 2nd-order filter) ----
   const lockScale = (spec?.steer ?? 0.58) / 0.62;
-  const maxLock = steerLockAt(absSpeed) * lockScale;
+  const maxLock = steerLockAt(speed) * lockScale * perf.steer;
+  // OpenCity: wantSteer = input.steer * maxLock (A = −1 left, D = +1 right).
   const wantSteer = steerIn * maxLock;
   const centering =
     Math.abs(wantSteer) < Math.abs(state.steerAngle) || wantSteer * state.steerAngle < 0;
-  steerToward(state, wantSteer, (centering ? STEER_BACK : STEER_IN) * perfSteer, dt);
-  const steerAngle = state.steerAngle;
+  steerToward(state, wantSteer, (centering ? STEER_BACK : STEER_IN) * perf.steer, dt);
 
-  // ---- longitudinal (engine, brakes, aero — OpenCity Fx path) ----
-  state.gear = gearForSpeed(speed);
+  state.gear = gearForSpeed(Math.max(speed, 0));
   const rpmRaw =
-    (absSpeed / WHEEL_R) * GEARS[state.gear] * FINAL * 60 / (Math.PI * 2);
-  state.rpm = damp(state.rpm, clamp(rpmRaw, IDLE_RPM, MAX_RPM), 9, dt);
+    (Math.max(absSpeed, 0.5) / WHEEL_R) * GEARS[state.gear] * FINAL * 60 / (Math.PI * 2);
+  state.rpm = damp(state.rpm, clamp(rpmRaw, IDLE_RPM, MAX_RPM), 10, dt);
 
-  let Fx = 0;
   const drive =
-    torqueAt(state.rpm / MAX_RPM) * DRIVE_TORQUE * perfPower * GEARS[state.gear] * FINAL / WHEEL_R;
-  const thrust = throttle * drive * (state.rpm > MAX_RPM * 0.985 ? 0.25 : 1);
-  Fx += thrust;
+    torqueAt(state.rpm / MAX_RPM) *
+    DRIVE_TORQUE *
+    perf.power *
+    GEARS[state.gear] *
+    FINAL /
+    WHEEL_R;
 
-  const braking = brake * BRAKE_FORCE + handbrake * HANDBRAKE_FORCE;
-  Fx -= Math.sign(speed || 1) * braking;
+  const reversing = brake > 0.15 && speed < 1.4 && throttle < 0.05;
+  let ax = 0;
 
-  Fx -= AERO_DRAG * perfDrag * speed * absSpeed;
-  const rollRes = 240 * Math.sign(speed) * Math.min(1, absSpeed);
-  Fx -= rollRes;
-
-  const ax = Fx / mass + state.vy * state.r;
-  state.speed += ax * dt;
-  if (state.speed < 0) state.speed = 0;
-
-  // ---- lateral tyres (bicycle slip + magic formula) ----
-  const mu = MU_BASE * perfGrip;
-  const vxSafe = Math.max(absSpeed, 1.2) * Math.sign(speed || 1);
-  const signVx = Math.sign(vxSafe);
-
-  let Fyf = 0;
-  let Fyr = 0;
-  if (absSpeed > 0.35) {
-    const slipF = Math.atan2(state.vy + A * state.r, absSpeed) - steerAngle * signVx;
-    const slipR = Math.atan2(state.vy - B * state.r, absSpeed);
-    const load = mass * G * 0.5;
-
-    Fyf = tyreForce(-slipF, load, mu);
-    const hbRear = lerp(1, 0.16, clamp(handbrake * perfDrift, 0, 1));
-    Fyr = tyreForce(-slipR, load, mu * hbRear);
-
-    const scrub = clamp(30 * state.vy * Math.abs(state.vy), -7000, 7000);
-    const Fy = Fyf + Fyr - scrub;
-
-    const ay = Fy / mass - speed * state.r;
-    state.vy += ay * dt;
-
-    const torque = A * Fyf * Math.cos(steerAngle) - B * Fyr;
-    state.r += (torque / IZZ) * dt;
-    state.r -= state.r * clamp(2.6 - absSpeed * 0.08, 0.4, 2.6) * dt;
-
-    const rMax = (mu * G) / Math.max(absSpeed, 5) * 1.28 + 0.15;
-    if (Math.abs(state.r) > rMax) {
-      state.r = lerp(state.r, Math.sign(state.r) * rMax, clamp(dt * 7, 0, 1));
+  if (reversing) {
+    ax = (-brake * REVERSE_FORCE * perf.power) / mass;
+  } else {
+    if (throttle > 0 && brake < 0.1) {
+      const launch = absSpeed < 3 ? 1.6 : 1;
+      ax += (throttle * drive * launch * (state.rpm > MAX_RPM * 0.98 ? 0.3 : 1)) / mass;
+    }
+    if (brake > 0 || handbrake > 0) {
+      const sign = Math.sign(speed) || 1;
+      ax -= ((brake * BRAKE_FORCE + handbrake * HANDBRAKE_FORCE) * sign) / mass;
+    }
+    if (absSpeed > 0.05) {
+      ax -= (AERO_DRAG * perf.drag * speed * absSpeed) / mass;
+      ax -= (160 * Math.sign(speed) * Math.min(1, absSpeed)) / mass;
     }
   }
 
-  if (absSpeed < 0.12 && throttle < 0.02) {
-    state.speed *= 0.86;
-    state.r *= 0.8;
+  speed += ax * dt;
+  if (!reversing && speed < 0 && throttle < 0.05) speed = 0;
+  speed = clamp(speed, -reverseMax, topMs);
+  state.speed = speed;
+
+  const grip = 1 - handbrake * 0.5 * perf.drift;
+  // OpenCity: +steer turns the nose right → negative yawOffset in road frame.
+  let yawRate = -(speed * Math.tan(state.steerAngle)) / wheelbase;
+  yawRate *= grip;
+  if (handbrake > 0.2 && absSpeed > 4) {
+    yawRate += -steerIn * handbrake * absSpeed * 0.028 * perf.drift;
   }
 
-  state.yawOffset += state.r * dt;
-  state.yawOffset = clamp(state.yawOffset, -0.4, 0.4);
+  // Turn-in at parking speeds when throttle is held (yawRate is 0 when speed = 0).
+  if (absSpeed < 2.5 && throttle > 0.08 && Math.abs(steerIn) > 0.05) {
+    yawRate += -steerIn * throttle * lerp(0.7, 0.12, smoothstep(0, 2.5, absSpeed));
+  }
 
-  // ---- road-frame position ----
-  state.s += speed * Math.cos(state.yawOffset) * dt;
-  state.lateral -= (state.vy + speed * Math.sin(state.yawOffset)) * dt;
+  state.yawOffset += yawRate * dt;
 
-  const slipAngle = Math.atan2(state.vy, absSpeed + 1.2);
+  if (Math.abs(steerIn) < 0.06 && handbrake < 0.1 && throttle < 0.05 && brake < 0.05) {
+    state.yawOffset = damp(state.yawOffset, 0, 4, dt);
+  }
+  state.yawOffset = clamp(state.yawOffset, -0.34, 0.34);
+
+  state.s = Math.max(0, state.s + speed * Math.cos(state.yawOffset) * dt);
+  state.lateral += speed * Math.sin(state.yawOffset) * dt;
+
+  state.lateral = clamp(state.lateral, -(roadHalf + 16), roadHalf + 16);
+
+  state.vy = 0;
+  state.r = 0;
   state.throttle = throttle;
   state.brake = brake;
   state.handbrake = handbrake;
 
-  return { steerAngle, slipAngle, gear: state.gear + 1, rpm: state.rpm };
+  return {
+    steerAngle: state.steerAngle,
+    slipAngle: state.yawOffset,
+    gear: state.gear + 1,
+    rpm: state.rpm,
+  };
 }
 
-/** @deprecated use stepVehicle */
-export function updateDrive(state, input, dt, spec) {
-  return stepVehicle(state, input, dt, spec);
+export function updateDrive(state, input, dt, spec, roadHalf) {
+  return stepVehicle(state, input, dt, spec, roadHalf);
 }
