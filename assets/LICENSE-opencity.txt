@@ -1,0 +1,4 @@
+OpenCity asset mirror
+Source: https://github.com/Basharkhan7776/opencity (ISC)
+3D models: Kenney.nl (CC0 1.0 Public Domain)
+See assets/LICENSE-kenney.txt and https://kenney.nl
