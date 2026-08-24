@@ -4,6 +4,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { Highway, ROAD_SURFACE } from './highway.js';
+import { buildRoadRibbon, buildRoadEdges } from './road.js';
+import { buildWaterStrip } from './water.js';
 
 export const CHUNK_LEN = 90;
 export const ROAD_W = 14;
@@ -11,10 +13,11 @@ export const ROAD_HALF = ROAD_W / 2 - 0.6;
 export const SKY = 0x8cc8e8;
 
 const PAL = {
-  grass: 0x5cb050,
+  // OpenCity coastal chapter palette (environment.js CHAPTERS[3])
+  grass: 0x568744,
+  grassAlt: 0x82a751,
   sand: 0xe8c96a,
-  water: 0x5aafd4,
-  road: 0x3a3a40,
+  road: 0x55514d,
   roadEdge: 0x2a2a30,
   mark: 0xffffff,
 };
@@ -185,12 +188,8 @@ export class World {
 
     const grassM = mat(PAL.grass);
     const sandM = mat(PAL.sand);
-    const waterM = mat(PAL.water, { rough: 0.35 });
-    const roadM = mat(PAL.road);
-    const edgeM = mat(PAL.roadEdge);
-    const shoulderM = mat(0x4a4a52);
     const markM = new THREE.MeshBasicMaterial({ color: PAL.mark });
-    for (const m of [grassM, sandM, waterM, roadM, edgeM, shoulderM, markM]) m.userData.owned = true;
+    for (const m of [grassM, sandM, markM]) m.userData.owned = true;
 
     const addSlab = (mx, my, mz, yaw, w, d, h, material, ox, oy, oz, castShadow, receiveShadow) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d + 0.12), material);
@@ -220,15 +219,29 @@ export class World {
       const nx = -Math.sin(hAvg);
       const nz = Math.cos(hAvg);
 
-      // Terrain: receive shadows, but don't cast (keeps sun shadow pass cheap).
-      addSlab(mx, my, mz, yaw, 55, segLen, 0.35, grassM, nx * 32, -0.12, nz * 32, false, true);
-      addSlab(mx, my, mz, yaw, 16, segLen, 0.3, sandM, -nx * 12, -0.15, -nz * 12, false, true);
-      addSlab(mx, my, mz, yaw, 90, segLen, 0.25, waterM, -nx * 56, -0.28, -nz * 56, false, true);
-      addSlab(mx, my, mz, yaw, ROAD_W + 0.6, segLen, 0.18, edgeM, 0, 0.02, 0, false, true);
-      addSlab(mx, my, mz, yaw, ROAD_W + 0.2, segLen, 0.14, shoulderM, 0, ROAD_SURFACE - 0.02, 0, false, true);
-      // Road: cast + receive.
-      addSlab(mx, my, mz, yaw, ROAD_W, segLen, 0.12, roadM, 0, ROAD_SURFACE, 0, true, true);
+      // Terrain: heavily overlapping thin slabs so adjacent segments never
+      // leave a visible seam when the road curves or changes elevation.
+      // tLen adds 5 m of overlap on each side (on top of the 0.12 inside addSlab).
+      const tLen = segLen + 5.0;
+      addSlab(mx, my, mz, yaw, 62, tLen, 0.10, grassM, nx * 32, 0.0, nz * 32, false, true);
+      addSlab(mx, my, mz, yaw, 22, tLen, 0.08, sandM, -nx * 12, -0.04, -nz * 12, false, true);
+
+      // Animated coastal water (OpenCity OceanWaves shader, UV shore strip).
+      const water = buildWaterStrip(
+        mx - nx * 58,
+        my,
+        mz - nz * 58,
+        yaw,
+        104,
+        tLen,
+        -0.18,
+      );
+      group.add(water);
     }
+
+    const roadMesh = buildRoadRibbon(this.highway, s0, s0 + CHUNK_LEN, ROAD_W);
+    if (roadMesh) group.add(roadMesh);
+    group.add(buildRoadEdges(this.highway, s0, s0 + CHUNK_LEN, ROAD_W, markM));
 
     // Center dashes — follow path exactly
     for (let s = s0 + 2; s < s0 + CHUNK_LEN; s += 8) {
@@ -252,23 +265,34 @@ export class World {
     return group;
   }
 
-  /** Warm street-lamp glow — intensity driven by night blend (0–1). */
+  /** Warm street-lamp glow — intensity driven by night blend (0–1).
+   *  `camPos` must be in the same highway world space as stored lamp coords
+   *  (not the recentered stage/player offset). */
   setNightLevel(night, camPos) {
     const n = Math.max(0, Math.min(1, night));
-    const radius = 120;
+    const radius = 140;
     const r2 = radius * radius;
-    const MAX_LIT = 12;
+    const MAX_LIT = 14;
 
     if (!camPos || n < 0.05) {
       for (const l of this.streetLights) {
         l.bulb.visible = false;
         l.bulb.intensity = 0;
+        if (l.headMat) l.headMat.emissiveIntensity = 0.15;
       }
       return;
     }
 
+    // Heads share materials per chunk — set emissive once from night level.
+    const headGlow = 0.55 + n * 2.2;
+    const seenHead = new Set();
+
     const ranked = [];
     for (const l of this.streetLights) {
+      if (l.headMat && !seenHead.has(l.headMat)) {
+        seenHead.add(l.headMat);
+        l.headMat.emissiveIntensity = headGlow;
+      }
       const dx = l.x - camPos.x;
       const dz = l.z - camPos.z;
       const d2 = dx * dx + dz * dz;
@@ -284,19 +308,21 @@ export class World {
         continue;
       }
       const dist = Math.sqrt((l.x - camPos.x) ** 2 + (l.z - camPos.z) ** 2);
-      const fall = 1 - dist / radius;
+      const fall = Math.max(0, 1 - dist / radius);
+      // r170 physical PointLights need high candela to read on dark asphalt.
       l.bulb.visible = true;
-      l.bulb.intensity = n * 2.4 * fall;
+      l.bulb.intensity = n * (55 + 70 * fall);
     }
   }
 
   scatterStreetLights(group, s0) {
     const poleM = mat(0x2e2e34);
+    // Warm sodium / amber street glow (not cool white).
     const lampM = new THREE.MeshStandardMaterial({
-      color: 0xffd8a8,
-      emissive: 0xffb870,
-      emissiveIntensity: 1.2,
-      roughness: 0.55,
+      color: 0xffc078,
+      emissive: 0xff8a2e,
+      emissiveIntensity: 0.2,
+      roughness: 0.45,
       metalness: 0,
       side: THREE.DoubleSide,
     });
@@ -324,11 +350,12 @@ export class World {
         head.userData.ownedGeo = true;
         group.add(head);
 
-        const bulb = new THREE.PointLight(0xffb870, 0, 80, 1.7);
-        bulb.position.set(x, y + 4.1, z);
+        // Warm amber point light — sits just under the head so it hits the road.
+        const bulb = new THREE.PointLight(0xff8c3a, 0, 55, 1.55);
+        bulb.position.set(x - f.nx * lat * side * 0.15, y + 3.85, z - f.nz * lat * side * 0.15);
         bulb.visible = false;
         group.add(bulb);
-        this.streetLights.push({ bulb, x, y: y + 4.1, z, s0 });
+        this.streetLights.push({ bulb, headMat: lampM, x, y: y + 3.85, z, s0 });
       }
     }
   }
@@ -445,6 +472,7 @@ export class World {
       if (o.material) {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
         for (const m of mats) {
+          if (m?.userData?.shared) continue;
           if (m?.userData?.owned) m.dispose();
         }
       }

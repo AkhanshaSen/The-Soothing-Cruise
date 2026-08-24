@@ -1,20 +1,22 @@
 /** Circular minimap + full map overlay (OpenCity-style). */
 
-function drawRoadPath(ctx, highway, player, scale, lateralScale) {
+function drawRoadPath(ctx, highway, player, scale, lateralScale, behind, ahead, step) {
   const f = highway.at(player.s);
   ctx.save();
-  ctx.translate(0, 0);
   ctx.rotate(-f.heading + Math.PI);
 
   ctx.beginPath();
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.88)';
-  ctx.lineWidth = 3;
-  for (let ds = -200; ds <= 240; ds += 5) {
+  ctx.lineWidth = Math.max(2.5, 3.2 * scale / 0.2);
+  let first = true;
+  for (let ds = -behind; ds <= ahead; ds += step) {
     const p = highway.at(Math.max(0, player.s + ds));
     const x = (p.x - f.x) * scale;
     const y = (p.z - f.z) * scale;
-    if (ds === -200) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+    if (first) {
+      ctx.moveTo(x, y);
+      first = false;
+    } else ctx.lineTo(x, y);
   }
   ctx.stroke();
 
@@ -62,7 +64,8 @@ export function drawMinimap(canvas, highway, player) {
   }
 
   ctx.translate(cx, cy);
-  drawRoadPath(ctx, highway, player, 0.42, 0.42);
+  // Zoomed out so left/right meanders read clearly.
+  drawRoadPath(ctx, highway, player, 0.2, 0.2, 320, 380, 6);
 
   ctx.restore();
 
@@ -82,6 +85,11 @@ export function drawFullMap(canvas, highway, player) {
   const r = Math.min(w, h) * 0.42;
 
   ctx.clearRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.clip();
 
   ctx.fillStyle = '#1a3d28';
   ctx.beginPath();
@@ -110,25 +118,29 @@ export function drawFullMap(canvas, highway, player) {
   ctx.lineTo(cx + r, cy);
   ctx.stroke();
 
-  ctx.save();
   ctx.translate(cx, cy);
   const f = highway.at(player.s);
   ctx.rotate(-f.heading + Math.PI);
 
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-  ctx.lineWidth = 4;
+  // Broader view (~±1.2 km) so multiple left/right turns fit in the circle.
+  const scale = 0.11;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+  ctx.lineWidth = 3.5;
   ctx.beginPath();
-  for (let ds = -500; ds <= 520; ds += 8) {
+  let first = true;
+  for (let ds = -1100; ds <= 1200; ds += 10) {
     const p = highway.at(Math.max(0, player.s + ds));
-    const x = (p.x - f.x) * 0.24;
-    const y = (p.z - f.z) * 0.24;
-    if (ds === -500) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+    const x = (p.x - f.x) * scale;
+    const y = (p.z - f.z) * scale;
+    if (first) {
+      ctx.moveTo(x, y);
+      first = false;
+    } else ctx.lineTo(x, y);
   }
   ctx.stroke();
 
-  const lx = f.nx * player.lateral * 0.24;
-  const ly = f.nz * player.lateral * 0.24;
+  const lx = f.nx * player.lateral * scale;
+  const ly = f.nz * player.lateral * scale;
   ctx.fillStyle = '#fff';
   ctx.beginPath();
   ctx.moveTo(lx, ly - 10);

@@ -65,3 +65,40 @@ export function fbm1(seed, x, octaves = 4) {
   }
   return v / n;
 }
+
+/** 2D value noise — ported from OpenCity src/core/rng.js */
+export function noise2(seed = 1) {
+  const r = new Rng(seed);
+  const N = 256;
+  const tab = new Float32Array(N * N);
+  for (let i = 0; i < N * N; i++) tab[i] = r.next();
+  const at = (x, y) => tab[(((y % N) + N) % N) * N + (((x % N) + N) % N)];
+  return (x, y) => {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const xf = x - xi;
+    const yf = y - yi;
+    const u = xf * xf * (3 - 2 * xf);
+    const v = yf * yf * (3 - 2 * yf);
+    const a = at(xi, yi);
+    const b = at(xi + 1, yi);
+    const c = at(xi, yi + 1);
+    const d = at(xi + 1, yi + 1);
+    return a + (b - a) * u + ((c + (d - c) * u) - (a + (b - a) * u)) * v;
+  };
+}
+
+/** OpenCity-style 1D table noise (used by buildRoad colour fields). */
+export function tableNoise1(seed = 1) {
+  const r = new Rng(seed);
+  const tab = new Float32Array(512);
+  for (let i = 0; i < 512; i++) tab[i] = r.next() * 2 - 1;
+  return (x) => {
+    const i = Math.floor(x);
+    const f = x - i;
+    const s = f * f * (3 - 2 * f);
+    const a = tab[((i % 512) + 512) % 512];
+    const b = tab[(((i + 1) % 512) + 512) % 512];
+    return a + (b - a) * s;
+  };
+}

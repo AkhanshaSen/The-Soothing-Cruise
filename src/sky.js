@@ -79,11 +79,13 @@ export class SkySystem {
     this.sun.color.setHex(sunColor);
     this.sun.intensity = sunInt;
 
-    this.hemi.color.setHex(lerpColor(0x304060, 0xa9d2ff, day));
-    this.hemi.groundColor.setHex(lerpColor(0x1a2030, 0x3d5058, day));
-    this.hemi.intensity = 0.2 + day * 0.35 + sunset * 0.15;
+    this.hemi.color.setHex(lerpColor(0x3a4560, 0xa9d2ff, day));
+    this.hemi.groundColor.setHex(lerpColor(0x1c1820, 0x3d5058, day));
+    this.hemi.intensity = 0.18 + day * 0.37 + sunset * 0.15;
 
-    this.ambient.intensity = 0.1 + day * 0.22 + night * 0.14;
+    // Keep night darker so warm street-lamp pools read clearly.
+    this.ambient.color.setHex(lerpColor(0xffe0c0, 0xffffff, day));
+    this.ambient.intensity = 0.05 + day * 0.25 + night * 0.04 + sunset * 0.06;
 
     if (camPos) {
       const sx = Math.cos(ang) * 80;
