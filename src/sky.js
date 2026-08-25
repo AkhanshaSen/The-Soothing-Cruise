@@ -5,10 +5,11 @@ function smooth(x, a, b) {
   return t * t * (3 - 2 * t);
 }
 
+const _ca = new THREE.Color();
+const _cb = new THREE.Color();
+
 function lerpColor(a, b, t) {
-  const ca = new THREE.Color(a);
-  const cb = new THREE.Color(b);
-  return ca.lerp(cb, t).getHex();
+  return _ca.set(a).lerp(_cb.set(b), t).getHex();
 }
 
 /** Day / night / sunset sky driven by settings. */

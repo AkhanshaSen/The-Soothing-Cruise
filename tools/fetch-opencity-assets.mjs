@@ -44,6 +44,13 @@ const FILES = [
   'assets/road/sign-highway.glb',
 ];
 
+/** Kenney packs share one colormap; house/forest/road GLBs expect it beside the models. */
+const COLORMAP_COPIES = [
+  'assets/house/Textures/colormap.png',
+  'assets/forest/Textures/colormap.png',
+  'assets/road/Textures/colormap.png',
+];
+
 async function download(rel) {
   const url = `${BASE}/${rel}`;
   const dest = path.join(root, rel);
@@ -61,6 +68,21 @@ for (const rel of FILES) {
   try {
     const dest = await download(rel);
     console.log(`  ✓ ${path.relative(root, dest)}`);
+    ok++;
+  } catch (err) {
+    console.warn(`  ✗ ${rel}: ${err.message}`);
+    fail++;
+  }
+}
+
+const { copyFile } = await import('node:fs/promises');
+const srcTex = path.join(root, 'assets/city/Textures/colormap.png');
+for (const rel of COLORMAP_COPIES) {
+  try {
+    const dest = path.join(root, rel);
+    await mkdir(path.dirname(dest), { recursive: true });
+    await copyFile(srcTex, dest);
+    console.log(`  ✓ ${rel} (shared colormap)`);
     ok++;
   } catch (err) {
     console.warn(`  ✗ ${rel}: ${err.message}`);

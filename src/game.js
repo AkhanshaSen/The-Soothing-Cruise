@@ -9,6 +9,7 @@ import { ChaseCamera } from './vehicle/camera.js';
 import { tickWater } from './water.js';
 import { CARS } from './vehicle/catalog.js';
 import { Input, driverInputFrom } from './core/input.js';
+import { bindTouch } from './ui/touch.js';
 
 // --- DOM ---
 const canvas = document.getElementById('game');
@@ -22,6 +23,7 @@ const beginDriveBtn = document.getElementById('begin-drive');
 const speedEl = document.getElementById('speed-value');
 const gearEl = document.getElementById('gear');
 const hudCarEl = document.getElementById('hud-car');
+const hudHintEl = document.getElementById('hud-hint');
 const carPicker = document.getElementById('car-picker');
 const pauseEl = document.getElementById('pause');
 const pauseCarEl = document.getElementById('pause-car');
@@ -33,9 +35,66 @@ const minimapBtn = document.getElementById('minimap-btn');
 const minimapCanvas = document.getElementById('minimap');
 const fullmapCanvas = document.getElementById('fullmap');
 const settingsList = document.getElementById('settings-list');
+const touchEl = document.getElementById('touch');
+const rotateHintEl = document.getElementById('rotate-hint');
 
 const uiRoot = document.body;
 const driveInput = new Input();
+
+/** Live check — DevTools device mode often fails a one-shot `(pointer: coarse)` at load. */
+function wantsTouchUi() {
+  try {
+    if (typeof matchMedia === 'function') {
+      if (matchMedia('(pointer: coarse)').matches) return true;
+      if (matchMedia('(hover: none)').matches) return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  if (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0) return true;
+  if ('ontouchstart' in window) return true;
+  const w = window.innerWidth || 0;
+  const h = window.innerHeight || 0;
+  // Phone-sized viewport (Chrome device emulator / small windows)
+  if (w > 0 && h > 0 && Math.min(w, h) <= 520) return true;
+  return false;
+}
+
+/** GFX defaults captured once at boot. */
+const isCoarse = wantsTouchUi();
+
+if (wantsTouchUi() && hudHintEl) {
+  hudHintEl.textContent = 'Joystick: steer · up drive · down brake · or use pedals';
+}
+
+function isPortraitPhone() {
+  return wantsTouchUi() && window.innerHeight > window.innerWidth;
+}
+
+function updateRotateHint() {
+  if (!rotateHintEl) return;
+  const show = mode === 'drive' && isPortraitPhone();
+  rotateHintEl.classList.toggle('hidden', !show);
+}
+
+function setTouchVisible(v) {
+  if (!touchEl) return;
+  const show = !!v && wantsTouchUi();
+  touchEl.classList.toggle('hidden', !show);
+  updateRotateHint();
+}
+
+async function lockLandscape() {
+  if (!wantsTouchUi()) return;
+  try {
+    if (screen.orientation?.lock) {
+      await screen.orientation.lock('landscape');
+    }
+  } catch {
+    /* browsers / DevTools often block this without fullscreen */
+  }
+  updateRotateHint();
+}
 
 let pauseIndex = 0;
 let pauseView = 'menu';
@@ -53,6 +112,7 @@ function showPreview() {
   hud.classList.add('hidden');
   pauseEl.classList.add('hidden');
   mapOverlay.classList.add('hidden');
+  setTouchVisible(false);
 }
 
 function startDrive() {
@@ -70,7 +130,9 @@ function startDrive() {
   lookPitch = 0;
   chaseCam.reset();
   canvas.focus({ preventScroll: true });
-  requestPointerLock();
+  setTouchVisible(true);
+  lockLandscape();
+  if (!wantsTouchUi()) requestPointerLock();
 }
 
 beginDriveBtn.addEventListener('click', startDrive);
@@ -98,6 +160,7 @@ function setPaused(v) {
   if (v && mapOpen) setMapOpen(false);
   mode = v ? 'paused' : 'drive';
   pauseEl.classList.toggle('hidden', !v);
+  setTouchVisible(!v);
   if (v) {
     pauseIndex = 0;
     pauseView = 'menu';
@@ -106,9 +169,15 @@ function setPaused(v) {
     document.exitPointerLock?.();
     lookYaw = 0;
     lookPitch = 0;
+    if (driveInput.touch) {
+      driveInput.touch.steer = 0;
+      driveInput.touch.throttle = 0;
+      driveInput.touch.brake = 0;
+      driveInput.touch.handbrake = 0;
+    }
   } else if (!flyMode) {
     canvas.focus({ preventScroll: true });
-    requestPointerLock();
+    if (!wantsTouchUi()) requestPointerLock();
   }
 }
 
@@ -121,9 +190,11 @@ function setMapOpen(v) {
   mapOverlay.classList.toggle('hidden', !v);
   if (v) {
     mode = 'map';
+    setTouchVisible(false);
     drawFullMap(fullmapCanvas, world.highway, state);
   } else if (mode === 'map') {
     mode = 'drive';
+    setTouchVisible(true);
   }
 }
 
@@ -177,7 +248,7 @@ function restartDrive() {
   const start = world.highway.at(state.s);
   applyCarTransform(start);
   world.recenter(start.x, 0, start.z);
-  world.sync(state.s);
+  world.syncImmediate(state.s);
   setPaused(false);
 }
 
@@ -358,8 +429,8 @@ function updateHudCarLabel(label) {
 }
 
 // --- Renderer ---
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !isCoarse });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isCoarse ? 1 : 1.5));
 renderer.setClearColor(SKY);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -381,6 +452,7 @@ let lookPitch = 0;
 let pointerLocked = false;
 
 function requestPointerLock() {
+  if (wantsTouchUi()) return;
   if (mode === 'drive' && document.pointerLockElement !== canvas) {
     canvas.requestPointerLock?.();
   }
@@ -441,6 +513,46 @@ function onMouseMove(e) {
   lookPitch = clamp(lookPitch - e.movementY * 0.003, -0.18, 0.42);
 }
 
+/** Touch-drag orbit on canvas (coarse devices — no pointer lock). */
+let _touchLookId = null;
+let _touchLookX = 0;
+let _touchLookY = 0;
+
+function onTouchLookStart(e) {
+  if (!wantsTouchUi() || mode !== 'drive' || flyMode || mapOpen) return;
+  const t = e.changedTouches[0];
+  if (!t) return;
+  const el = document.elementFromPoint(t.clientX, t.clientY);
+  if (el && el.closest?.('#touch, #hud, #pause, #map-overlay, #preview')) return;
+  _touchLookId = t.identifier;
+  _touchLookX = t.clientX;
+  _touchLookY = t.clientY;
+}
+
+function onTouchLookMove(e) {
+  if (_touchLookId == null) return;
+  for (const t of e.changedTouches) {
+    if (t.identifier !== _touchLookId) continue;
+    const dx = t.clientX - _touchLookX;
+    const dy = t.clientY - _touchLookY;
+    _touchLookX = t.clientX;
+    _touchLookY = t.clientY;
+    lookYaw -= dx * 0.004;
+    lookPitch = clamp(lookPitch - dy * 0.003, -0.18, 0.42);
+    e.preventDefault();
+    break;
+  }
+}
+
+function onTouchLookEnd(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === _touchLookId) {
+      _touchLookId = null;
+      break;
+    }
+  }
+}
+
 const hemi = new THREE.HemisphereLight(0xa9d2ff, 0x3d5058, 0.55);
 scene.add(hemi);
 const ambient = new THREE.AmbientLight(0xffffff, 0.3);
@@ -475,6 +587,12 @@ function applyGfx() {
   const shadowsOn = GFX_SHADOWS[gfx.shadowIdx] !== false;
   renderer.shadowMap.enabled = shadowsOn;
   sun.castShadow = shadowsOn;
+  const mapSize = isCoarse ? 512 : 1024;
+  if (sun.shadow.mapSize.x !== mapSize) {
+    sun.shadow.mapSize.set(mapSize, mapSize);
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null;
+  }
   const tm = TIME_MODES[gfx.timeIdx] ?? TIME_MODES[2];
   skySystem.setMode(tm.mode);
   if (tm.cycle) skySystem.setCycleMinutes(tm.cycle);
@@ -562,7 +680,6 @@ function addCarButton(container, model) {
 }
 
 for (const model of CAR_MODELS) {
-  addCarButton(previewGarage, model);
   addCarButton(carPicker, model);
   const pauseBtn = document.createElement('button');
   pauseBtn.type = 'button';
@@ -646,13 +763,14 @@ function simulateDrive(dt) {
   let n = 0;
   let driveOut = { steerAngle: 0, slipAngle: 0 };
   const di = driverInput();
+  const maxSteps = dt > 0.033 ? 4 : MAX_SUBSTEPS;
 
-  while (_simAcc >= SUBSTEP && n < MAX_SUBSTEPS) {
+  while (_simAcc >= SUBSTEP && n < maxSteps) {
     driveOut = stepVehicle(state, di, SUBSTEP, activeCarSpec, ROAD_HALF);
     _simAcc -= SUBSTEP;
     n++;
   }
-  if (n >= MAX_SUBSTEPS) _simAcc = 0;
+  if (n >= maxSteps) _simAcc = 0;
 
   const rollTarget = clamp(-driveOut.slipAngle * 0.4 + state.steerAngle * 0.08, -0.25, 0.25);
   state.rollLoad = damp(state.rollLoad, rollTarget, 2.5, dt);
@@ -678,8 +796,8 @@ function syncWorld(dt) {
   } else {
     chaseCam.update(p, dt, {
       lookBack: driveInput.lookBack,
-      orbitYaw: pointerLocked ? lookYaw : 0,
-      orbitPitch: pointerLocked ? lookPitch : 0,
+      orbitYaw: pointerLocked || wantsTouchUi() ? lookYaw : 0,
+      orbitPitch: pointerLocked || wantsTouchUi() ? lookPitch : 0,
       speed: state.speed,
     });
   }
@@ -731,6 +849,10 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  if (mode === 'drive') {
+    setTouchVisible(true);
+    updateRotateHint();
+  }
 }
 
 function tick() {
@@ -742,6 +864,27 @@ function tick() {
 async function boot() {
   resize();
   window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => {
+    resize();
+    if (mode === 'drive') lockLandscape();
+  });
+  if (window.visualViewport) {
+    visualViewport.addEventListener('resize', resize);
+    visualViewport.addEventListener('scroll', resize);
+  }
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(resize).observe(canvas);
+  }
+
+  bindTouch(document.body, driveInput, {
+    onPause: () => {
+      if (mode === 'drive') setPaused(true);
+    },
+    onReset: () => {
+      if (mode === 'drive' || mode === 'paused') restartDrive();
+    },
+  });
+
   document.addEventListener('mousemove', onMouseMove);
   document.addEventListener('pointerlockchange', () => {
     pointerLocked = document.pointerLockElement === canvas;
@@ -750,6 +893,16 @@ async function boot() {
     canvas.focus({ preventScroll: true });
     if (mode === 'drive' && !flyMode) requestPointerLock();
   });
+  canvas.addEventListener('touchstart', onTouchLookStart, { passive: true });
+  canvas.addEventListener('touchmove', onTouchLookMove, { passive: false });
+  canvas.addEventListener('touchend', onTouchLookEnd, { passive: true });
+  canvas.addEventListener('touchcancel', onTouchLookEnd, { passive: true });
+
+  document.addEventListener('fullscreenchange', () => {
+    resize();
+    if (document.fullscreenElement && mode === 'drive') lockLandscape();
+  });
+
   tick();
 
   try {
@@ -759,7 +912,7 @@ async function boot() {
     setLoading(0.85, 'Loading car…');
     await setCar(CAR_MODELS[0]);
 
-    world.sync(state.s);
+    world.syncImmediate(state.s);
     const start = world.highway.at(state.s);
     applyCarTransform(start);
     world.recenter(start.x, 0, start.z);

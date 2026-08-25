@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#1a1418" />
+    <meta name="screen-orientation" content="landscape" />
     <title>Road Drive</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,7 +12,7 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Outfit:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./src/style.css?v=21" />
+    <link rel="stylesheet" href="./src/style.css?v=29" />
     <script type="importmap">
       {
         "imports": {
@@ -37,7 +38,7 @@
         <div class="wordmark">Road Drive</div>
         <div class="tag">Endless coastal cruise</div>
       </div>
-      <div id="preview-garage" class="garage" aria-label="Choose car"></div>
+      <div id="preview-garage" class="garage hidden" aria-label="Choose car"></div>
       <button type="button" id="begin-drive" class="primary">Begin Drive</button>
       <p class="preview-credits">Kenney CC0 · OpenCity scenery · Akhansha Sen</p>
     </div>
@@ -49,7 +50,7 @@
       </button>
 
       <div class="oc-bar">
-        <div class="oc-hint">WASD drive · Space handbrake · C look back · Mouse orbit · R reset · Esc pause · Ctrl+F fullscreen</div>
+        <div class="oc-hint" id="hud-hint">WASD drive · Space handbrake · C look back · Mouse orbit · R reset · Esc pause · Ctrl+F fullscreen</div>
         <div class="oc-car" id="hud-car">Sports</div>
         <div class="oc-speed">
           <span id="speed-value">0</span>
@@ -59,6 +60,37 @@
       </div>
 
       <div id="car-picker" aria-label="Choose car"></div>
+    </div>
+
+    <!-- Touch controls (phones / coarse pointers) -->
+    <div id="touch" class="touch hidden">
+      <div class="top-btns">
+        <button type="button" id="tpause">Pause</button>
+        <button type="button" id="treset">Reset</button>
+      </div>
+      <div class="joystick" id="steer" aria-label="Steer">
+        <div class="joystick-base">
+          <span class="joy-arrow joy-up" aria-hidden="true"></span>
+          <span class="joy-arrow joy-down" aria-hidden="true"></span>
+          <span class="joy-arrow joy-left" aria-hidden="true"></span>
+          <span class="joy-arrow joy-right" aria-hidden="true"></span>
+          <span class="joystick-well" aria-hidden="true"></span>
+        </div>
+        <div class="knob" id="knob"></div>
+      </div>
+      <div class="pedals">
+        <button type="button" class="pedal" id="brake">Brake</button>
+        <button type="button" class="pedal" id="gas">Drive</button>
+      </div>
+    </div>
+
+    <!-- Portrait → landscape nudge (browsers rarely auto-lock) -->
+    <div id="rotate-hint" class="rotate-hint hidden" aria-live="polite">
+      <div class="rotate-hint-card">
+        <div class="rotate-icon" aria-hidden="true"></div>
+        <p>Rotate phone to landscape</p>
+        <p class="rotate-hint-sub">Turn your device sideways to drive</p>
+      </div>
     </div>
 
     <!-- Pause menu -->
@@ -72,7 +104,10 @@
           <li data-i="2">SETTINGS</li>
           <li data-i="3">RESTART</li>
         </ul>
-        <p class="oc-pause-hint" id="pause-hint-main">UP / DOWN choose · ENTER select · ESC resume · click an option</p>
+        <p class="oc-pause-hint" id="pause-hint-main">
+          <span class="hint-desk">UP / DOWN choose · ENTER select · ESC resume · click an option</span>
+          <span class="hint-touch">Tap an option</span>
+        </p>
         <div class="oc-pause-settings hidden" id="pause-settings">
           <h2 class="oc-pause-sub">SETTINGS</h2>
           <ul class="settings-list" id="settings-list">
@@ -81,15 +116,22 @@
             <li class="settings-row"><span>SHADOWS</span><span class="settings-val">&lt; ON &gt;</span></li>
             <li class="settings-row"><span>TIME OF DAY</span><span class="settings-val">&lt; DYNAMIC (3 MIN) &gt;</span></li>
           </ul>
-          <p class="oc-pause-hint">UP / DOWN row · LEFT / RIGHT change · ESC back</p>
+          <p class="oc-pause-hint">
+            <span class="hint-desk">UP / DOWN row · LEFT / RIGHT change · ESC back</span>
+            <span class="hint-touch">Tap a row to change · tap RESUME when done</span>
+          </p>
         </div>
         <div class="oc-pause-vehicle hidden" id="pause-vehicle">
           <h2 class="oc-pause-sub">CHANGE VEHICLE</h2>
           <div class="pause-garage" id="pause-garage"></div>
-          <p class="oc-pause-hint">Click a car · ESC back to menu</p>
+          <p class="oc-pause-hint">
+            <span class="hint-desk">Click a car · ESC back to menu</span>
+            <span class="hint-touch">Tap a car · use Pause menu to go back</span>
+          </p>
         </div>
         <div class="oc-pause-controls">
-          WASD / ARROWS drive · LT/RT throttle/brake · A handbrake · Y look back · SPACE drift · C look back · MOUSE orbit · R reset · ESC pause · M map · CTRL+F fullscreen · CTRL+SHIFT+C free-fly
+          <span class="oc-pause-controls-desk">WASD / ARROWS drive · LT/RT throttle/brake · A handbrake · Y look back · SPACE drift · C look back · MOUSE orbit · R reset · ESC pause · M map · CTRL+F fullscreen · CTRL+SHIFT+C free-fly</span>
+          <span class="oc-pause-controls-touch">Joystick: left / right steer · up drive · down brake · or use pedals · Pause / Reset at top</span>
         </div>
       </div>
     </div>
@@ -104,10 +146,13 @@
         <div class="map-body">
           <canvas id="fullmap" width="420" height="420"></canvas>
         </div>
-        <p class="map-footer">PRESS [M] OR [ESC] TO CLOSE MAP</p>
+        <p class="map-footer">
+          <span class="map-footer-desk">PRESS [M] OR [ESC] TO CLOSE MAP</span>
+          <span class="map-footer-touch">TAP BACK TO CLOSE</span>
+        </p>
       </div>
     </div>
 
-    <script type="module" src="./src/game.js?v=21"></script>
+    <script type="module" src="./src/game.js?v=29"></script>
   </body>
 </html>

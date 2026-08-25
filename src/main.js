@@ -50,7 +50,8 @@ function clearError() {
 }
 
 mountUI(ui);
-bindTouch(ui);
+// Orphaned entry — touch wiring lives in game.js for the live build.
+bindTouch(ui, { touch: { steer: 0, throttle: 0, brake: 0, handbrake: 0 } });
 
 const renderer = createRenderer(canvas);
 const scene = new THREE.Scene();
