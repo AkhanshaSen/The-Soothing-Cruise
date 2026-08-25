@@ -1,5 +1,5 @@
 /** OpenCity-style pause menu — keyboard navigation. */
-export const PAUSE_ACTIONS = ['resume', 'vehicle', 'settings', 'restart'];
+export const PAUSE_ACTIONS = ['resume', 'vehicle', 'settings', 'restart', 'fullscreen'];
 
 export const TIME_MODES = [
   { id: 'dyn30', label: 'DYNAMIC (30 MIN)', mode: 'dynamic', cycle: 30 },
@@ -25,9 +25,9 @@ export function defaultGfx() {
   return { resIdx: 1, distIdx: 1, shadowIdx: 0, timeIdx: 2 };
 }
 
-/** Lower defaults for phones / coarse pointers — only used when no saved settings. */
+/** Balanced phone defaults — sharp enough, still smooth. */
 export function mobileDefaultGfx() {
-  return { resIdx: 0, distIdx: 0, shadowIdx: 1, timeIdx: 2 };
+  return { resIdx: 1, distIdx: 1, shadowIdx: 1, timeIdx: 2 };
 }
 
 function isCoarseDevice() {
@@ -115,17 +115,20 @@ export function updatePauseMenu(root, { index, carName, view = 'menu', settingsI
   }
 }
 
-export function cycleSetting(gfx, row, dir) {
+export function cycleSetting(gfx, row, dir, { mobile = false } = {}) {
   const next = { ...gfx };
-  if (row === 0) next.resIdx = (next.resIdx + dir + GFX_RES.length) % GFX_RES.length;
-  else if (row === 1) next.distIdx = (next.distIdx + dir + GFX_DIST.length) % GFX_DIST.length;
+  if (row === 0) {
+    // Phones: only 0.7X / 1.0X — 1.5X tanks frame rate.
+    const n = mobile ? 2 : GFX_RES.length;
+    next.resIdx = (next.resIdx + dir + n) % n;
+  } else if (row === 1) next.distIdx = (next.distIdx + dir + GFX_DIST.length) % GFX_DIST.length;
   else if (row === 2) next.shadowIdx = (next.shadowIdx + dir + GFX_SHADOWS.length) % GFX_SHADOWS.length;
   else if (row === 3) next.timeIdx = (next.timeIdx + dir + TIME_MODES.length) % TIME_MODES.length;
   return next;
 }
 
 export function handlePauseNav(root, {
-  up, down, left, right, confirm, back, index, view, settingsIndex = 0, gfx, onAction, onViewChange, onGfxChange,
+  up, down, left, right, confirm, back, index, view, settingsIndex = 0, gfx, onAction, onViewChange, onGfxChange, mobile = false,
 }) {
   if (view === 'menu') {
     let next = index;
@@ -157,7 +160,7 @@ export function handlePauseNav(root, {
     if (down) row = (settingsIndex + 1) % SETTINGS_ROWS.length;
     if (left || right) {
       const dir = right ? 1 : -1;
-      onGfxChange?.(cycleSetting(gfx, row, dir));
+      onGfxChange?.(cycleSetting(gfx, row, dir, { mobile }));
       return { index, view, settingsIndex: row, consumed: true };
     }
     if (back) {

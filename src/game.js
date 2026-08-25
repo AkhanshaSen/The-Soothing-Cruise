@@ -100,6 +100,10 @@ let pauseIndex = 0;
 let pauseView = 'menu';
 let pauseSettingsIndex = 0;
 let gfx = loadGfx();
+if (wantsTouchUi() && gfx.resIdx > 1) {
+  gfx = { ...gfx, resIdx: 1 };
+  saveGfx(gfx);
+}
 
 function setLoading(progress, label) {
   loadingFill.style.width = `${Math.round(progress * 100)}%`;
@@ -131,11 +135,14 @@ function startDrive() {
   chaseCam.reset();
   canvas.focus({ preventScroll: true });
   setTouchVisible(true);
-  lockLandscape();
-  if (!wantsTouchUi()) requestPointerLock();
+  if (wantsTouchUi()) enterFullscreen();
+  else requestPointerLock();
 }
 
 beginDriveBtn.addEventListener('click', startDrive);
+document.getElementById('preview-fullscreen')?.addEventListener('click', () => {
+  enterFullscreen();
+});
 mapBackBtn.addEventListener('click', () => setMapOpen(false));
 minimapBtn.addEventListener('click', () => {
   if (mode === 'drive' || mode === 'map') setMapOpen(!mapOpen);
@@ -201,6 +208,7 @@ function setMapOpen(v) {
 function runPauseAction(action) {
   if (action === 'resume') setPaused(false);
   else if (action === 'restart') restartDrive();
+  else if (action === 'fullscreen') enterFullscreen();
 }
 
 function activatePauseItem(index) {
@@ -226,6 +234,15 @@ pauseMenu.querySelectorAll('li').forEach((li, i) => {
     activatePauseItem(i);
   });
 });
+
+function backToPauseMenu() {
+  if (mode !== 'paused') return;
+  pauseView = 'menu';
+  refreshPauseUi();
+}
+
+document.getElementById('pause-settings-back')?.addEventListener('click', backToPauseMenu);
+document.getElementById('pause-vehicle-back')?.addEventListener('click', backToPauseMenu);
 
 function restartDrive() {
   state.s = 40;
@@ -276,6 +293,7 @@ function handlePauseInput() {
       applyGfx();
       refreshPauseUi();
     },
+    mobile: wantsTouchUi(),
   });
 
   if (result.index !== pauseIndex) pauseIndex = result.index;
@@ -459,11 +477,25 @@ function requestPointerLock() {
 }
 
 function toggleFullscreen() {
-  if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen?.();
-  } else {
-    document.exitFullscreen?.();
+  enterFullscreen();
+}
+
+async function enterFullscreen() {
+  const root = document.documentElement;
+  try {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      if (root.requestFullscreen) await root.requestFullscreen({ navigationUI: 'hide' });
+      else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
+    } else if (document.exitFullscreen) {
+      await document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  } catch {
+    /* iOS Safari often blocks — user can Add to Home Screen for true fullscreen */
   }
+  await lockLandscape();
+  resize();
 }
 
 function toggleFly() {
@@ -574,7 +606,10 @@ scene.add(sun.target);
 const skySystem = new SkySystem(scene, sun, hemi, ambient);
 
 function applyGfx() {
-  const pr = GFX_RES[gfx.resIdx] ?? 1;
+  // Cap phone resolution at 1.0X — 1.5X looks sharper but usually stutters.
+  let resIdx = gfx.resIdx ?? 1;
+  if (wantsTouchUi() && resIdx > 1) resIdx = 1;
+  const pr = GFX_RES[resIdx] ?? 1;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, pr));
   const dist = GFX_DIST[gfx.distIdx] ?? 500;
   skySystem.fogFar = dist;
@@ -603,7 +638,7 @@ settingsList?.querySelectorAll('.settings-row').forEach((row, i) => {
   row.addEventListener('click', () => {
     if (mode !== 'paused' || pauseView !== 'settings') return;
     if (pauseSettingsIndex === i) {
-      gfx = cycleSetting(gfx, i, 1);
+      gfx = cycleSetting(gfx, i, 1, { mobile: wantsTouchUi() });
       saveGfx(gfx);
       applyGfx();
     } else {
@@ -883,6 +918,7 @@ async function boot() {
     onReset: () => {
       if (mode === 'drive' || mode === 'paused') restartDrive();
     },
+    onFullscreen: () => enterFullscreen(),
   });
 
   document.addEventListener('mousemove', onMouseMove);

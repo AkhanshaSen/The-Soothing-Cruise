@@ -177,6 +177,24 @@ button.primary:active {
   transform: translateY(0);
 }
 
+.preview-fs {
+  border: 1px solid rgba(244, 230, 197, 0.4);
+  border-radius: 999px;
+  padding: 0.55rem 1.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(26, 20, 24, 0.45);
+  color: #f4e6c5;
+  cursor: pointer;
+}
+
+.preview-fs:hover {
+  border-color: rgba(255, 213, 79, 0.7);
+  background: rgba(255, 213, 79, 0.12);
+}
+
 .preview-credits {
   font-size: 0.68rem;
   letter-spacing: 0.06em;
@@ -417,6 +435,25 @@ button.primary:active {
   letter-spacing: 0.12em;
   margin-bottom: 1rem;
   text-align: center;
+}
+
+.pause-back {
+  display: block;
+  margin: 1.1rem auto 0;
+  border: none;
+  border-radius: 0.35rem;
+  padding: 0.5rem 1.1rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  background: #f0b429;
+  color: #1a1418;
+  cursor: pointer;
+  text-transform: uppercase;
+}
+
+.pause-back:hover {
+  filter: brightness(1.05);
 }
 
 .oc-pause-settings,

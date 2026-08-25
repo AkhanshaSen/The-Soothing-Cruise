@@ -12,7 +12,7 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Outfit:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./src/style.css?v=29" />
+    <link rel="stylesheet" href="./src/style.css?v=31" />
     <script type="importmap">
       {
         "imports": {
@@ -40,6 +40,7 @@
       </div>
       <div id="preview-garage" class="garage hidden" aria-label="Choose car"></div>
       <button type="button" id="begin-drive" class="primary">Begin Drive</button>
+      <button type="button" id="preview-fullscreen" class="preview-fs">Fullscreen</button>
       <p class="preview-credits">Kenney CC0 · OpenCity scenery · Akhansha Sen</p>
     </div>
 
@@ -66,6 +67,7 @@
     <div id="touch" class="touch hidden">
       <div class="top-btns">
         <button type="button" id="tpause">Pause</button>
+        <button type="button" id="tfullscreen">Full</button>
         <button type="button" id="treset">Reset</button>
       </div>
       <div class="joystick" id="steer" aria-label="Steer">
@@ -103,6 +105,7 @@
           <li data-i="1">CHANGE VEHICLE</li>
           <li data-i="2">SETTINGS</li>
           <li data-i="3">RESTART</li>
+          <li data-i="4">FULLSCREEN</li>
         </ul>
         <p class="oc-pause-hint" id="pause-hint-main">
           <span class="hint-desk">UP / DOWN choose · ENTER select · ESC resume · click an option</span>
@@ -116,17 +119,19 @@
             <li class="settings-row"><span>SHADOWS</span><span class="settings-val">&lt; ON &gt;</span></li>
             <li class="settings-row"><span>TIME OF DAY</span><span class="settings-val">&lt; DYNAMIC (3 MIN) &gt;</span></li>
           </ul>
+          <button type="button" class="pause-back" id="pause-settings-back">◀ BACK</button>
           <p class="oc-pause-hint">
             <span class="hint-desk">UP / DOWN row · LEFT / RIGHT change · ESC back</span>
-            <span class="hint-touch">Tap a row to change · tap RESUME when done</span>
+            <span class="hint-touch">Tap a row to change · BACK to menu · RESUME to drive</span>
           </p>
         </div>
         <div class="oc-pause-vehicle hidden" id="pause-vehicle">
           <h2 class="oc-pause-sub">CHANGE VEHICLE</h2>
           <div class="pause-garage" id="pause-garage"></div>
+          <button type="button" class="pause-back" id="pause-vehicle-back">◀ BACK</button>
           <p class="oc-pause-hint">
             <span class="hint-desk">Click a car · ESC back to menu</span>
-            <span class="hint-touch">Tap a car · use Pause menu to go back</span>
+            <span class="hint-touch">Tap a car · BACK to menu · RESUME to drive</span>
           </p>
         </div>
         <div class="oc-pause-controls">
@@ -153,6 +158,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/game.js?v=29"></script>
+    <script type="module" src="./src/game.js?v=31"></script>
   </body>
 </html>
