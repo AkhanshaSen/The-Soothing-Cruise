@@ -491,7 +491,7 @@ button.primary:active {
 
 .oc-pause-controls {
   position: absolute;
-  bottom: 1.4rem;
+  bottom: max(1.4rem, env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   border: 2px solid #f0b429;
@@ -504,6 +504,13 @@ button.primary:active {
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 0.92;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+.hint-touch,
+.oc-pause-controls-touch {
+  display: none;
 }
 
 .row {
@@ -590,6 +597,10 @@ button.primary:active {
   text-transform: uppercase;
 }
 
+.map-footer .map-footer-touch {
+  display: none;
+}
+
 @media (max-width: 520px) {
   .oc-bar {
     grid-template-columns: 1fr;
@@ -611,3 +622,576 @@ button.primary:active {
     padding-bottom: 3.5rem;
   }
 }
+
+/* --- Touch controls --- */
+.touch {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.touch.hidden {
+  display: none !important;
+}
+
+.touch .steer,
+.touch .joystick,
+.touch .pedals,
+.touch .pedal,
+.touch .top-btns,
+.touch .top-btns button {
+  pointer-events: auto;
+}
+
+.joystick,
+.steer {
+  position: absolute;
+  left: max(1rem, env(safe-area-inset-left));
+  bottom: max(1.2rem, env(safe-area-inset-bottom));
+  width: 132px;
+  height: 132px;
+  max-width: none;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  touch-action: none;
+}
+
+.joystick-base {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #2a2a2e;
+  border: 2px solid #1a1a1c;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.joystick-base::before,
+.joystick-base::after {
+  content: '';
+  position: absolute;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.joystick-base::before {
+  left: 50%;
+  top: 8%;
+  bottom: 8%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.joystick-base::after {
+  top: 50%;
+  left: 8%;
+  right: 8%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.joystick-well {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46%;
+  height: 46%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #1e1e22;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.55);
+}
+
+.joy-arrow {
+  position: absolute;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  opacity: 0.9;
+  z-index: 1;
+}
+
+.joy-up {
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 0 7px 10px 7px;
+  border-color: transparent transparent #f2f2f2 transparent;
+}
+
+.joy-down {
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 10px 7px 0 7px;
+  border-color: #f2f2f2 transparent transparent transparent;
+}
+
+.joy-left {
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 7px 10px 7px 0;
+  border-color: transparent #f2f2f2 transparent transparent;
+}
+
+.joy-right {
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 7px 0 7px 10px;
+  border-color: transparent transparent transparent #f2f2f2;
+}
+
+.knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 52px;
+  height: 52px;
+  margin-left: -26px;
+  margin-top: -26px;
+  border-radius: 50%;
+  background: linear-gradient(160deg, #6a6a70 0%, #3e3e44 55%, #2c2c30 100%);
+  border: 2px solid #8a8a90;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  will-change: left, top;
+  z-index: 2;
+}
+
+/* Rotate-to-landscape nudge */
+.rotate-hint {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 8, 12, 0.72);
+  pointer-events: auto;
+  padding: 1.5rem;
+}
+
+.rotate-hint.hidden {
+  display: none !important;
+}
+
+.rotate-hint-card {
+  text-align: center;
+  color: #f4e6c5;
+  max-width: 16rem;
+}
+
+.rotate-icon {
+  width: 64px;
+  height: 40px;
+  margin: 0 auto 1rem;
+  border: 3px solid #f4e6c5;
+  border-radius: 8px;
+  position: relative;
+  animation: rotate-nudge 1.6s ease-in-out infinite;
+}
+
+.rotate-icon::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: #f4e6c5;
+}
+
+.rotate-hint-card p {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.rotate-hint-sub {
+  margin-top: 0.45rem;
+  font-size: 0.75rem;
+  font-weight: 400;
+  opacity: 0.7;
+  letter-spacing: 0.02em;
+}
+
+@keyframes rotate-nudge {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  40% {
+    transform: rotate(90deg);
+  }
+  60% {
+    transform: rotate(90deg);
+  }
+}
+
+.pedals {
+  position: absolute;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1.4rem, env(safe-area-inset-bottom));
+  display: flex;
+  gap: 0.7rem;
+}
+
+.pedal {
+  width: 76px;
+  height: 76px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(18, 12, 22, 0.45);
+  color: #f4e6c5;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.pedal:active {
+  background: rgba(255, 213, 79, 0.35);
+  border-color: rgba(255, 213, 79, 0.6);
+}
+
+.top-btns {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.5rem;
+  z-index: 9;
+}
+
+.top-btns button {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(18, 12, 22, 0.5);
+  color: #f4e6c5;
+  cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .garage button,
+  #car-picker button,
+  .minimap {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .oc-hint {
+    display: none;
+  }
+
+  .oc-bar {
+    grid-template-columns: 1fr auto;
+    padding-bottom: 6.5rem;
+  }
+
+  .oc-car {
+    grid-column: 1;
+    text-align: left;
+    padding-bottom: 0;
+  }
+
+  .oc-speed {
+    position: static;
+    grid-column: 2;
+  }
+
+  .minimap {
+    width: 96px;
+    height: 96px;
+    top: max(3.8rem, calc(env(safe-area-inset-top) + 3.2rem));
+    bottom: auto;
+    left: max(0.75rem, env(safe-area-inset-left));
+  }
+
+  .oc-pause-controls {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    line-height: 1.45;
+    font-size: 0.62rem;
+  }
+
+  .hint-desk,
+  .oc-pause-controls-desk {
+    display: none;
+  }
+
+  .hint-touch,
+  .oc-pause-controls-touch {
+    display: inline;
+  }
+
+  .oc-pause {
+    padding: max(1rem, env(safe-area-inset-top)) 1rem max(5.5rem, calc(env(safe-area-inset-bottom) + 4.5rem));
+    box-sizing: border-box;
+    justify-content: center;
+  }
+
+  .oc-pause-car {
+    margin-bottom: 1.25rem;
+  }
+
+  .oc-pause-hint {
+    margin-top: 1.25rem;
+    padding: 0 1rem;
+    text-align: center;
+    max-width: 22rem;
+    line-height: 1.4;
+  }
+
+  .oc-pause-controls {
+    left: max(0.75rem, env(safe-area-inset-left));
+    right: max(0.75rem, env(safe-area-inset-right));
+    width: auto;
+    max-width: none;
+    transform: none;
+    padding: 0.65rem 0.85rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    line-height: 1.5;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .oc-pause-menu li {
+    font-size: 1.05rem;
+    padding: 0.65rem 0 0.65rem 1.6rem;
+  }
+
+  .map-overlay {
+    padding: max(0.5rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right))
+      max(0.5rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+    align-items: center;
+    box-sizing: border-box;
+  }
+
+  .map-panel {
+    width: min(340px, calc(100% - 1rem));
+    max-height: calc(100dvh - 1rem);
+    padding: 0.65rem 0.75rem 0.75rem;
+    overflow: auto;
+    box-sizing: border-box;
+  }
+
+  .map-header {
+    margin-bottom: 0.4rem;
+  }
+
+  .map-title {
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+  }
+
+  .map-body {
+    padding: 0.25rem 0;
+  }
+
+  .map-body canvas {
+    width: min(240px, 58vw, 52dvh);
+    height: auto;
+  }
+
+  .map-footer {
+    margin-top: 0.45rem;
+    font-size: 0.6rem;
+  }
+
+  .map-footer .map-footer-desk {
+    display: none;
+  }
+
+  .map-footer .map-footer-touch {
+    display: inline;
+  }
+}
+
+@media (pointer: coarse) and (orientation: landscape),
+  (max-height: 480px) and (orientation: landscape) {
+  .hint-desk,
+  .oc-pause-controls-desk {
+    display: none;
+  }
+
+  .hint-touch,
+  .oc-pause-controls-touch {
+    display: inline;
+  }
+
+  .oc-pause-title {
+    font-size: clamp(1.6rem, 6vh, 2.4rem);
+    margin-bottom: 0.15rem;
+  }
+
+  .oc-pause-car {
+    margin-bottom: 0.65rem;
+    font-size: 0.9rem;
+  }
+
+  .oc-pause-hint {
+    margin-top: 0.75rem;
+    font-size: 0.65rem;
+    padding: 0 1rem;
+    text-align: center;
+    max-width: 22rem;
+    line-height: 1.4;
+  }
+
+  .oc-pause-menu li {
+    font-size: 0.95rem;
+    padding: 0.4rem 0 0.4rem 1.5rem;
+  }
+
+  .oc-pause {
+    padding: max(0.5rem, env(safe-area-inset-top)) 1rem max(4.25rem, calc(env(safe-area-inset-bottom) + 3.5rem));
+    box-sizing: border-box;
+  }
+
+  .oc-pause-controls {
+    left: max(0.75rem, env(safe-area-inset-left));
+    right: max(0.75rem, env(safe-area-inset-right));
+    width: auto;
+    max-width: none;
+    transform: none;
+    bottom: max(0.55rem, env(safe-area-inset-bottom));
+    padding: 0.45rem 0.7rem;
+    font-size: 0.6rem;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .map-overlay {
+    padding: 0.35rem max(0.5rem, env(safe-area-inset-right)) 0.35rem
+      max(0.5rem, env(safe-area-inset-left));
+  }
+
+  .map-panel {
+    width: min(280px, 48vw);
+    max-height: calc(100dvh - 0.7rem);
+    padding: 0.45rem 0.55rem 0.5rem;
+  }
+
+  .map-title {
+    font-size: 0.62rem;
+  }
+
+  .map-back {
+    padding: 0.3rem 0.55rem;
+    font-size: 0.65rem;
+  }
+
+  .map-body canvas {
+    width: min(200px, 42vw, 58dvh);
+    height: auto;
+  }
+
+  .map-footer {
+    margin-top: 0.3rem;
+    font-size: 0.55rem;
+  }
+
+  .map-footer .map-footer-desk {
+    display: none;
+  }
+
+  .map-footer .map-footer-touch {
+    display: inline;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .joystick,
+  .steer {
+    width: 110px;
+    height: 110px;
+    bottom: max(0.55rem, env(safe-area-inset-bottom));
+  }
+
+  .knob {
+    width: 44px;
+    height: 44px;
+    margin-left: -22px;
+    margin-top: -22px;
+  }
+
+  .joy-up {
+    top: 8px;
+    border-width: 0 6px 8px 6px;
+  }
+
+  .joy-down {
+    bottom: 8px;
+    border-width: 8px 6px 0 6px;
+  }
+
+  .joy-left {
+    left: 8px;
+    border-width: 6px 8px 6px 0;
+  }
+
+  .joy-right {
+    right: 8px;
+    border-width: 6px 0 6px 8px;
+  }
+
+  .pedals {
+    bottom: max(0.7rem, env(safe-area-inset-bottom));
+  }
+
+  .pedal {
+    width: 64px;
+    height: 64px;
+    font-size: 0.62rem;
+  }
+
+  .minimap {
+    width: 84px;
+    height: 84px;
+    top: max(0.6rem, env(safe-area-inset-top));
+    right: max(0.75rem, env(safe-area-inset-right));
+    left: auto;
+    bottom: auto;
+  }
+
+  #car-picker {
+    display: none;
+  }
+
+  .oc-bar {
+    padding-bottom: 5.2rem;
+  }
+
+  .top-btns {
+    top: max(0.45rem, env(safe-area-inset-top));
+  }
+
+  .top-btns button {
+    padding: 0.35rem 0.7rem;
+    font-size: 0.65rem;
+  }
+}
+

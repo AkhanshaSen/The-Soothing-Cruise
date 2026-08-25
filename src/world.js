@@ -114,7 +114,8 @@ export class World {
     this.highway = new Highway(11);
     this.stage = new THREE.Group();
     this.chunks = new Map();
-    this.streetLights = [];
+    /** @type {Map<number, { i: number, s0: number, group: THREE.Group, step: number, rng: Rng, mats: object }>} */
+    this._pendingBuilds = new Map();
     this.trees = [];
     this.buildings = [];
     this.houses = [];
@@ -221,17 +222,38 @@ export class World {
 
     for (let i = i0; i <= i1; i++) {
       keep.add(i);
-      if (!this.chunks.has(i)) {
-        const chunk = this.buildChunk(i * CHUNK_LEN);
-        this.stage.add(chunk);
-        this.chunks.set(i, chunk);
+      if (!this.chunks.has(i) && !this._pendingBuilds.has(i)) {
+        this._startChunkBuild(i);
+      }
+    }
+
+    // Advance one pending build step per frame to avoid hitch spikes.
+    if (this._pendingBuilds.size) {
+      // Prefer the chunk closest to the player so the road ahead fills first.
+      let best = null;
+      let bestDist = Infinity;
+      for (const pb of this._pendingBuilds.values()) {
+        if (!keep.has(pb.i)) continue;
+        const dist = Math.abs(pb.i - Math.floor(playerS / CHUNK_LEN));
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = pb;
+        }
+      }
+      if (best && this._advanceChunkBuild(best)) {
+        this._pendingBuilds.delete(best.i);
+      }
+    }
+
+    for (const [i, pb] of this._pendingBuilds) {
+      if (!keep.has(i)) {
+        this.dispose(pb.group);
+        this._pendingBuilds.delete(i);
       }
     }
 
     for (const [i, chunk] of this.chunks) {
       if (!keep.has(i)) {
-        const s0 = i * CHUNK_LEN;
-        this.streetLights = this.streetLights.filter((l) => l.s0 !== s0);
         this.stage.remove(chunk);
         this.dispose(chunk);
         this.chunks.delete(i);
@@ -239,16 +261,92 @@ export class World {
     }
   }
 
-  buildChunk(s0) {
+  /** Synchronously build any missing chunks (boot / first paint). */
+  syncImmediate(playerS) {
+    const i0 = Math.max(0, Math.floor(playerS / CHUNK_LEN) - 1);
+    const i1 = Math.floor(playerS / CHUNK_LEN) + 5;
+    const keep = new Set();
+
+    for (let i = i0; i <= i1; i++) {
+      keep.add(i);
+      if (this._pendingBuilds.has(i)) {
+        const pb = this._pendingBuilds.get(i);
+        while (!this._advanceChunkBuild(pb)) {
+          /* finish pending */
+        }
+        this._pendingBuilds.delete(i);
+      } else if (!this.chunks.has(i)) {
+        const chunk = this.buildChunk(i * CHUNK_LEN);
+        this.stage.add(chunk);
+        this.chunks.set(i, chunk);
+      }
+    }
+
+    for (const [i, pb] of this._pendingBuilds) {
+      if (!keep.has(i)) {
+        this.dispose(pb.group);
+        this._pendingBuilds.delete(i);
+      }
+    }
+
+    for (const [i, chunk] of this.chunks) {
+      if (!keep.has(i)) {
+        this.stage.remove(chunk);
+        this.dispose(chunk);
+        this.chunks.delete(i);
+      }
+    }
+  }
+
+  _startChunkBuild(i) {
+    const s0 = i * CHUNK_LEN;
     const group = new THREE.Group();
     group.userData.s0 = s0;
-    const rng = new Rng((s0 * 9781) | 0);
-    const ROAD_STEP = 5;
-
+    group.userData.lights = [];
     const grassM = mat(PAL.grass);
     const sandM = mat(PAL.sand);
     const markM = new THREE.MeshBasicMaterial({ color: PAL.mark });
     for (const m of [grassM, sandM, markM]) m.userData.owned = true;
+    this._pendingBuilds.set(i, {
+      i,
+      s0,
+      group,
+      step: 0,
+      rng: new Rng((s0 * 9781) | 0),
+      mats: { grassM, sandM, markM },
+    });
+  }
+
+  /** @returns {boolean} true when the chunk is fully built and added to the stage */
+  _advanceChunkBuild(pb) {
+    const { s0, group, rng, mats } = pb;
+    if (pb.step === 0) {
+      this._buildChunkTerrain(group, s0, mats);
+      pb.step = 1;
+      return false;
+    }
+    if (pb.step === 1) {
+      this._buildChunkRoad(group, s0, mats.markM);
+      pb.step = 2;
+      return false;
+    }
+    if (pb.step === 2) {
+      this.scatterTrees(group, s0, rng);
+      if (Math.floor(s0 / CHUNK_LEN) % 3 === 0) this.scatterBuildings(group, s0, rng);
+      if (Math.floor(s0 / CHUNK_LEN) % 2 === 0) this.scatterRocks(group, s0, rng);
+      this.scatterRoadProps(group, s0, rng);
+      pb.step = 3;
+      return false;
+    }
+    this.scatterStreetLights(group, s0);
+    this.stage.add(group);
+    this.chunks.set(pb.i, group);
+    return true;
+  }
+
+  _buildChunkTerrain(group, s0, mats) {
+    const ROAD_STEP = 5;
+    const { grassM, sandM } = mats;
 
     const addSlab = (mx, my, mz, yaw, w, d, h, material, ox, oy, oz, castShadow, receiveShadow) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d + 0.12), material);
@@ -260,7 +358,6 @@ export class World {
       group.add(m);
     };
 
-    // Smooth road — fine steps aligned A→B (no mid-point kinks)
     for (let s = s0; s < s0 + CHUNK_LEN - 0.01; s += ROAD_STEP) {
       const sEnd = Math.min(s + ROAD_STEP, s0 + CHUNK_LEN);
       const a = this.highway.at(s);
@@ -278,14 +375,10 @@ export class World {
       const nx = -Math.sin(hAvg);
       const nz = Math.cos(hAvg);
 
-      // Terrain: heavily overlapping thin slabs so adjacent segments never
-      // leave a visible seam when the road curves or changes elevation.
-      // tLen adds 5 m of overlap on each side (on top of the 0.12 inside addSlab).
       const tLen = segLen + 5.0;
       addSlab(mx, my, mz, yaw, 62, tLen, 0.10, grassM, nx * 32, 0.0, nz * 32, false, true);
       addSlab(mx, my, mz, yaw, 22, tLen, 0.08, sandM, -nx * 12, -0.04, -nz * 12, false, true);
 
-      // Animated coastal water (OpenCity OceanWaves shader, UV shore strip).
       const water = buildWaterStrip(
         mx - nx * 58,
         my,
@@ -297,12 +390,13 @@ export class World {
       );
       group.add(water);
     }
+  }
 
+  _buildChunkRoad(group, s0, markM) {
     const roadMesh = buildRoadRibbon(this.highway, s0, s0 + CHUNK_LEN, ROAD_W);
     if (roadMesh) group.add(roadMesh);
     group.add(buildRoadEdges(this.highway, s0, s0 + CHUNK_LEN, ROAD_W, markM));
 
-    // Center dashes — follow path exactly
     for (let s = s0 + 2; s < s0 + CHUNK_LEN; s += 8) {
       const f = this.highway.at(s);
       const yaw = Math.atan2(f.tx, f.tz);
@@ -314,13 +408,26 @@ export class World {
       dash.userData.ownedGeo = true;
       group.add(dash);
     }
+  }
 
+  /** Full synchronous build (boot). */
+  buildChunk(s0) {
+    const group = new THREE.Group();
+    group.userData.s0 = s0;
+    group.userData.lights = [];
+    const rng = new Rng((s0 * 9781) | 0);
+    const grassM = mat(PAL.grass);
+    const sandM = mat(PAL.sand);
+    const markM = new THREE.MeshBasicMaterial({ color: PAL.mark });
+    for (const m of [grassM, sandM, markM]) m.userData.owned = true;
+
+    this._buildChunkTerrain(group, s0, { grassM, sandM, markM });
+    this._buildChunkRoad(group, s0, markM);
     this.scatterTrees(group, s0, rng);
     if (Math.floor(s0 / CHUNK_LEN) % 3 === 0) this.scatterBuildings(group, s0, rng);
     if (Math.floor(s0 / CHUNK_LEN) % 2 === 0) this.scatterRocks(group, s0, rng);
     this.scatterRoadProps(group, s0, rng);
     this.scatterStreetLights(group, s0);
-
     return group;
   }
 
@@ -333,8 +440,16 @@ export class World {
     const r2 = radius * radius;
     const MAX_LIT = 14;
 
+    const lights = [];
+    for (const chunk of this.chunks.values()) {
+      const chunkLights = chunk.userData.lights;
+      if (chunkLights) {
+        for (let i = 0; i < chunkLights.length; i++) lights.push(chunkLights[i]);
+      }
+    }
+
     if (!camPos || n < 0.05) {
-      for (const l of this.streetLights) {
+      for (const l of lights) {
         l.bulb.visible = false;
         l.bulb.intensity = 0;
         if (l.headMat) l.headMat.emissiveIntensity = 0.15;
@@ -342,12 +457,12 @@ export class World {
       return;
     }
 
-    // Heads share materials per chunk — set emissive once from night level.
     const headGlow = 0.55 + n * 2.2;
     const seenHead = new Set();
 
-    const ranked = [];
-    for (const l of this.streetLights) {
+    // Partial top-K by distance — avoid full-array sort as the world grows.
+    const top = [];
+    for (const l of lights) {
       if (l.headMat && !seenHead.has(l.headMat)) {
         seenHead.add(l.headMat);
         l.headMat.emissiveIntensity = headGlow;
@@ -355,12 +470,25 @@ export class World {
       const dx = l.x - camPos.x;
       const dz = l.z - camPos.z;
       const d2 = dx * dx + dz * dz;
-      if (d2 <= r2) ranked.push({ l, d2 });
+      if (d2 > r2) {
+        l.bulb.visible = false;
+        l.bulb.intensity = 0;
+        continue;
+      }
+      if (top.length < MAX_LIT) {
+        top.push({ l, d2 });
+        if (top.length === MAX_LIT) top.sort((a, b) => a.d2 - b.d2);
+      } else if (d2 < top[MAX_LIT - 1].d2) {
+        top[MAX_LIT - 1] = { l, d2 };
+        top.sort((a, b) => a.d2 - b.d2);
+      } else {
+        l.bulb.visible = false;
+        l.bulb.intensity = 0;
+      }
     }
-    ranked.sort((a, b) => a.d2 - b.d2);
 
-    const on = new Set(ranked.slice(0, MAX_LIT).map((e) => e.l));
-    for (const l of this.streetLights) {
+    const on = new Set(top.map((e) => e.l));
+    for (const l of lights) {
       if (!on.has(l)) {
         l.bulb.visible = false;
         l.bulb.intensity = 0;
@@ -368,7 +496,6 @@ export class World {
       }
       const dist = Math.sqrt((l.x - camPos.x) ** 2 + (l.z - camPos.z) ** 2);
       const fall = Math.max(0, 1 - dist / radius);
-      // r170 physical PointLights need high candela to read on dark asphalt.
       l.bulb.visible = true;
       l.bulb.intensity = n * (55 + 70 * fall);
     }
@@ -376,7 +503,6 @@ export class World {
 
   scatterStreetLights(group, s0) {
     const poleM = mat(0x2e2e34);
-    // Warm sodium / amber street glow (not cool white).
     const lampM = new THREE.MeshStandardMaterial({
       color: 0xffc078,
       emissive: 0xff8a2e,
@@ -387,6 +513,8 @@ export class World {
     });
     poleM.userData.owned = true;
     lampM.userData.owned = true;
+
+    const lights = group.userData.lights || (group.userData.lights = []);
 
     for (let s = s0 + 10; s < s0 + CHUNK_LEN; s += 35) {
       const f = this.highway.at(s);
@@ -413,12 +541,11 @@ export class World {
         head.raycast = () => {};
         group.add(head);
 
-        // Warm amber point light — sits just under the head so it hits the road.
         const bulb = new THREE.PointLight(0xff8c3a, 0, 55, 1.55);
         bulb.position.set(x - f.nx * lat * side * 0.15, y + 3.85, z - f.nz * lat * side * 0.15);
         bulb.visible = false;
         group.add(bulb);
-        this.streetLights.push({ bulb, headMat: lampM, x, y: y + 3.85, z, s0 });
+        lights.push({ bulb, headMat: lampM, x, y: y + 3.85, z, s0 });
       }
     }
   }

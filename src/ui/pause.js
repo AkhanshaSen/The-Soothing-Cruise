@@ -25,8 +25,22 @@ export function defaultGfx() {
   return { resIdx: 1, distIdx: 1, shadowIdx: 0, timeIdx: 2 };
 }
 
+/** Lower defaults for phones / coarse pointers — only used when no saved settings. */
+export function mobileDefaultGfx() {
+  return { resIdx: 0, distIdx: 0, shadowIdx: 1, timeIdx: 2 };
+}
+
+function isCoarseDevice() {
+  try {
+    if (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches) return true;
+  } catch {
+    /* ignore */
+  }
+  return typeof window !== 'undefined' && 'ontouchstart' in window && Math.min(screen.width, screen.height) < 900;
+}
+
 export function loadGfx() {
-  const d = defaultGfx();
+  const d = isCoarseDevice() ? mobileDefaultGfx() : defaultGfx();
   try {
     const raw = localStorage.getItem('roaddrive.gfx');
     if (!raw) return d;

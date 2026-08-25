@@ -119,7 +119,10 @@ export class ChaseCamera {
     this.camera.lookAt(this._lookCur);
 
     const fov = 62 + 18 * speedT * speedT;
+    const prevFov = this.camera.fov;
     this.camera.fov = approach(this.camera.fov, fov, 3, dt);
-    this.camera.updateProjectionMatrix();
+    if (Math.abs(this.camera.fov - prevFov) > 0.05) {
+      this.camera.updateProjectionMatrix();
+    }
   }
 }

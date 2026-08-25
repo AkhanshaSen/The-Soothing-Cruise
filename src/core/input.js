@@ -68,7 +68,7 @@ export class Input {
     this.menuLeftPressed = false;
     this.menuRightPressed = false;
     this.confirmPressed = false;
-    this.touch = null;
+    this.touch = { steer: 0, throttle: 0, brake: 0, handbrake: 0 };
     this._pressedThisFrame = new Set();
     this._padWas = [];
     this._padMenu = 0;
@@ -148,6 +148,13 @@ export class Input {
       thr = Math.max(thr, level(PAD.r2));
       brk = Math.max(brk, level(PAD.l2));
       hb = Math.max(hb, level(PAD.south));
+    }
+
+    if (this.touch) {
+      if (Math.abs(this.touch.steer) > 0.02) steerWant = this.touch.steer;
+      thr = Math.max(thr, this.touch.throttle || 0);
+      brk = Math.max(brk, this.touch.brake || 0);
+      hb = Math.max(hb, this.touch.handbrake || 0);
     }
 
     this.steer = steerWant;
