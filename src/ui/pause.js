@@ -1,5 +1,5 @@
 /** OpenCity-style pause menu — keyboard navigation. */
-export const PAUSE_ACTIONS = ['resume', 'vehicle', 'settings', 'restart', 'fullscreen'];
+export const PAUSE_ACTIONS = ['resume', 'vehicle', 'settings', 'fullscreen', 'restart'];
 
 export const TIME_MODES = [
   { id: 'dyn30', label: 'DYNAMIC (30 MIN)', mode: 'dynamic', cycle: 30 },

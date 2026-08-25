@@ -12,7 +12,7 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Outfit:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./src/style.css?v=31" />
+    <link rel="stylesheet" href="./src/style.css?v=32" />
     <script type="importmap">
       {
         "imports": {
@@ -101,11 +101,11 @@
         <h1 class="oc-pause-title">PAUSED</h1>
         <div class="oc-pause-car" id="pause-car">Sports</div>
         <ul class="oc-pause-menu" id="pause-menu">
-          <li class="selected" data-i="0">RESUME</li>
-          <li data-i="1">CHANGE VEHICLE</li>
-          <li data-i="2">SETTINGS</li>
-          <li data-i="3">RESTART</li>
-          <li data-i="4">FULLSCREEN</li>
+          <li class="selected" data-action="resume">RESUME</li>
+          <li data-action="vehicle">CHANGE VEHICLE</li>
+          <li data-action="settings">SETTINGS</li>
+          <li data-action="fullscreen">FULLSCREEN</li>
+          <li data-action="restart">RESTART</li>
         </ul>
         <p class="oc-pause-hint" id="pause-hint-main">
           <span class="hint-desk">UP / DOWN choose · ENTER select · ESC resume · click an option</span>
@@ -158,6 +158,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/game.js?v=31"></script>
+    <script type="module" src="./src/game.js?v=32"></script>
   </body>
 </html>
