@@ -208,11 +208,15 @@ function setMapOpen(v) {
 function runPauseAction(action) {
   if (action === 'resume') setPaused(false);
   else if (action === 'restart') restartDrive();
-  else if (action === 'fullscreen') enterFullscreen();
+  else if (action === 'fullscreen') {
+    // Keep pause open; fullscreen is a display mode, not a menu exit.
+    enterFullscreen();
+  }
 }
 
 function activatePauseItem(index) {
   pauseIndex = index;
+  refreshPauseUi();
   const action = PAUSE_ACTIONS[index];
   if (action === 'settings') {
     pauseView = 'settings';
@@ -228,11 +232,16 @@ function activatePauseItem(index) {
   runPauseAction(action);
 }
 
-pauseMenu.querySelectorAll('li').forEach((li, i) => {
-  li.addEventListener('click', () => {
-    if (mode !== 'paused') return;
-    activatePauseItem(i);
-  });
+// Direct tap → run that option immediately (no select-then-confirm).
+pauseMenu.addEventListener('click', (e) => {
+  const li = e.target.closest('li[data-action]');
+  if (!li || mode !== 'paused' || pauseView !== 'menu') return;
+  e.preventDefault();
+  e.stopPropagation();
+  const action = li.dataset.action;
+  const index = PAUSE_ACTIONS.indexOf(action);
+  if (index < 0) return;
+  activatePauseItem(index);
 });
 
 function backToPauseMenu() {
@@ -480,22 +489,46 @@ function toggleFullscreen() {
   enterFullscreen();
 }
 
+function isFullscreen() {
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+let _fsBusy = false;
 async function enterFullscreen() {
+  if (_fsBusy) return;
+  _fsBusy = true;
   const root = document.documentElement;
   try {
-    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-      if (root.requestFullscreen) await root.requestFullscreen({ navigationUI: 'hide' });
-      else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
-    } else if (document.exitFullscreen) {
-      await document.exitFullscreen();
-    } else if (document.webkitExitFullscreen) {
-      document.webkitExitFullscreen();
+    if (isFullscreen()) {
+      if (document.exitFullscreen) await document.exitFullscreen();
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+    } else if (root.requestFullscreen) {
+      try {
+        await root.requestFullscreen();
+      } catch {
+        try {
+          await root.requestFullscreen({ navigationUI: 'hide' });
+        } catch (err2) {
+          console.warn('Fullscreen failed', err2);
+        }
+      }
+    } else if (root.webkitRequestFullscreen) {
+      root.webkitRequestFullscreen();
+    } else if (root.webkitRequestFullScreen) {
+      root.webkitRequestFullScreen();
     }
-  } catch {
-    /* iOS Safari often blocks — user can Add to Home Screen for true fullscreen */
+  } catch (err) {
+    console.warn('Fullscreen failed', err);
   }
-  await lockLandscape();
+  try {
+    await lockLandscape();
+  } catch {
+    /* ignore */
+  }
   resize();
+  setTimeout(() => {
+    _fsBusy = false;
+  }, 500);
 }
 
 function toggleFly() {
@@ -637,13 +670,11 @@ applyGfx();
 settingsList?.querySelectorAll('.settings-row').forEach((row, i) => {
   row.addEventListener('click', () => {
     if (mode !== 'paused' || pauseView !== 'settings') return;
-    if (pauseSettingsIndex === i) {
-      gfx = cycleSetting(gfx, i, 1, { mobile: wantsTouchUi() });
-      saveGfx(gfx);
-      applyGfx();
-    } else {
-      pauseSettingsIndex = i;
-    }
+    // First tap both selects and cycles — no second tap required.
+    pauseSettingsIndex = i;
+    gfx = cycleSetting(gfx, i, 1, { mobile: wantsTouchUi() });
+    saveGfx(gfx);
+    applyGfx();
     refreshPauseUi();
   });
 });

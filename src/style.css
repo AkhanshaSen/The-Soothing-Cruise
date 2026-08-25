@@ -395,13 +395,17 @@ button.primary:active {
   font-size: 1.15rem;
   font-weight: 700;
   letter-spacing: 0.16em;
-  padding: 0.55rem 0 0.55rem 1.6rem;
+  padding: 0.7rem 1rem 0.7rem 1.6rem;
   position: relative;
   opacity: 0.72;
   cursor: pointer;
   user-select: none;
   color: #fff;
   text-transform: uppercase;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(240, 180, 41, 0.25);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .oc-pause-menu li:hover {

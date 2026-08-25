@@ -109,21 +109,21 @@ export function bindTouch(root, input, { onPause, onReset, onFullscreen } = {}) 
   holdPedal(gas, 'throttle');
   holdPedal(brake, 'brake');
 
-  tpause?.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onPause?.();
-  });
-  treset?.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onReset?.();
-  });
-  tfullscreen?.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onFullscreen?.();
-  });
+  const arm = (el, fn) => {
+    if (!el || !fn) return;
+    el.addEventListener(
+      'pointerup',
+      (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        fn();
+      },
+      { passive: false },
+    );
+  };
+  arm(tpause, onPause);
+  arm(treset, onReset);
+  arm(tfullscreen, onFullscreen);
 
   placeKnob(0, 0);
 }
