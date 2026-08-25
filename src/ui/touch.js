@@ -3,13 +3,14 @@
  * Stick: X = steer, up = drive, down = brake.
  * Right buttons still work as Drive / Brake holds.
  */
-export function bindTouch(root, input, { onPause, onReset } = {}) {
+export function bindTouch(root, input, { onPause, onReset, onFullscreen } = {}) {
   const stick = root.querySelector('#steer');
   const knob = root.querySelector('#knob');
   const gas = root.querySelector('#gas');
   const brake = root.querySelector('#brake');
   const tpause = root.querySelector('#tpause');
   const treset = root.querySelector('#treset');
+  const tfullscreen = root.querySelector('#tfullscreen');
   if (!stick || !input?.touch) return;
 
   let active = false;
@@ -117,6 +118,11 @@ export function bindTouch(root, input, { onPause, onReset } = {}) {
     e.preventDefault();
     e.stopPropagation();
     onReset?.();
+  });
+  tfullscreen?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onFullscreen?.();
   });
 
   placeKnob(0, 0);
