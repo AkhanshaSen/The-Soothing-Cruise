@@ -215,9 +215,18 @@ export class World {
     return root;
   }
 
-  sync(playerS) {
+  /**
+   * Stream chunks around the player.
+   * @param {number} playerS
+   * @param {{speed?: number}} [opts]  speed in m/s — expands look-ahead at F1 pace
+   */
+  sync(playerS, opts = {}) {
+    const speed = Math.abs(opts.speed ?? 0);
+    const speedKmh = speed * 3.6;
+    // Cruise (~150): +5 chunks. F1 (~350): +11–12 so road stays filled ahead.
+    const ahead = 5 + Math.round(Math.max(0, Math.min(7, (speedKmh - 120) / 40)));
     const i0 = Math.max(0, Math.floor(playerS / CHUNK_LEN) - 1);
-    const i1 = Math.floor(playerS / CHUNK_LEN) + 5;
+    const i1 = Math.floor(playerS / CHUNK_LEN) + ahead;
     const keep = new Set();
 
     for (let i = i0; i <= i1; i++) {
@@ -227,21 +236,35 @@ export class World {
       }
     }
 
-    // Advance one pending build step per frame to avoid hitch spikes.
+    // At high speed (or a backlog) finish several build steps per frame.
+    const stepsBudget = speedKmh > 200
+      ? 8
+      : speedKmh > 140
+        ? 4
+        : this._pendingBuilds.size > 3
+          ? 3
+          : 1;
+
     if (this._pendingBuilds.size) {
-      // Prefer the chunk closest to the player so the road ahead fills first.
-      let best = null;
-      let bestDist = Infinity;
-      for (const pb of this._pendingBuilds.values()) {
-        if (!keep.has(pb.i)) continue;
-        const dist = Math.abs(pb.i - Math.floor(playerS / CHUNK_LEN));
-        if (dist < bestDist) {
-          bestDist = dist;
-          best = pb;
+      const playerChunk = Math.floor(playerS / CHUNK_LEN);
+      for (let n = 0; n < stepsBudget && this._pendingBuilds.size; n++) {
+        let best = null;
+        let bestDist = Infinity;
+        for (const pb of this._pendingBuilds.values()) {
+          if (!keep.has(pb.i)) continue;
+          // Prefer chunks ahead of the player over ones behind.
+          const dist = pb.i >= playerChunk
+            ? pb.i - playerChunk
+            : 100 + (playerChunk - pb.i);
+          if (dist < bestDist) {
+            bestDist = dist;
+            best = pb;
+          }
         }
-      }
-      if (best && this._advanceChunkBuild(best)) {
-        this._pendingBuilds.delete(best.i);
+        if (!best) break;
+        if (this._advanceChunkBuild(best)) {
+          this._pendingBuilds.delete(best.i);
+        }
       }
     }
 
@@ -377,12 +400,14 @@ export class World {
 
       const tLen = segLen + 5.0;
       addSlab(mx, my, mz, yaw, 62, tLen, 0.10, grassM, nx * 32, 0.0, nz * 32, false, true);
-      addSlab(mx, my, mz, yaw, 22, tLen, 0.08, sandM, -nx * 12, -0.04, -nz * 12, false, true);
+      // Wider beach between asphalt and shore (~road edge → ~28 m).
+      addSlab(mx, my, mz, yaw, 34, tLen, 0.08, sandM, -nx * 20, -0.04, -nz * 20, false, true);
 
+      // Water centre ~78 m out; strip half-width 52 → shore ~26 m from road centre.
       const water = buildWaterStrip(
-        mx - nx * 58,
+        mx - nx * 78,
         my,
-        mz - nz * 58,
+        mz - nz * 78,
         yaw,
         104,
         tLen,
@@ -552,23 +577,39 @@ export class World {
 
   scatterTrees(group, s0, rng) {
     const n = this.trees.length ? 28 : 16;
+    // Water strip (see _buildChunkTerrain): center at ~78m out, half-width ~52m.
+    // So water starts around ~26m out from the road center on the water-side.
+    const waterCenterLat = 78;
+    const waterHalfWidth = 104 / 2;
+    const waterShoreLat = waterCenterLat - waterHalfWidth;
+    const treeLatMin = ROAD_W / 2 + 10;
+    const treeLatMaxOpposite = ROAD_W / 2 + 52;
+    const treeLatMaxOnWaterSide = waterShoreLat - 2.5; // keep trunks on the land band
+    const waterSide = -1; // because water is built at mx - nx * 78
     for (let i = 0; i < n; i++) {
       const s = s0 + rng.range(4, CHUNK_LEN - 4);
       const f = this.highway.at(s);
       const side = rng.next() < 0.88 ? 1 : -1;
-      const lat = rng.range(ROAD_W / 2 + 10, ROAD_W / 2 + 52);
+      const latMax = side === waterSide ? treeLatMaxOnWaterSide : treeLatMaxOpposite;
+      const lat = rng.range(treeLatMin, latMax);
 
       if (this.trees.length) {
         const t = this.trees[Math.floor(rng.next() * this.trees.length)];
-        group.add(
-          placeProp(t, {
-            x: f.x + f.nx * lat * side,
-            y: f.y,
-            z: f.z + f.nz * lat * side,
-            yaw: rng.range(0, Math.PI * 2),
-            scale: rng.range(1.0, 2.2),
-          }),
-        );
+        const tree = placeProp(t, {
+          x: f.x + f.nx * lat * side,
+          y: f.y + (side === waterSide ? 0.02 : 0),
+          z: f.z + f.nz * lat * side,
+          yaw: rng.range(0, Math.PI * 2),
+          scale: rng.range(1.0, 2.2),
+        });
+        // Many vegetation instances with cast/receive shadows are expensive; keep them off.
+        tree.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = false;
+            o.receiveShadow = false;
+          }
+        });
+        group.add(tree);
       } else {
         const sc = rng.range(0.85, 1.3);
         const trunk = new THREE.Mesh(
@@ -581,6 +622,8 @@ export class World {
           mat(0x3d7f36),
         );
         crown.position.set(trunk.position.x, f.y + 3.1 * sc, trunk.position.z);
+        trunk.castShadow = false;
+        crown.castShadow = false;
         group.add(trunk, crown);
       }
     }
@@ -590,12 +633,14 @@ export class World {
     for (let i = 0; i < 18; i++) {
       const s = s0 + rng.range(2, CHUNK_LEN - 2);
       const f = this.highway.at(s);
-      const side = rng.next() < 0.85 ? 1 : -1;
+      // Place far pines only on the land side to avoid crowns over the water strip.
+      const side = 1;
       const lat = rng.range(ROAD_W / 2 + 40, ROAD_W / 2 + 78);
       const sc = rng.range(1.6, 3.2);
       const crown = new THREE.Mesh(new THREE.ConeGeometry(1.3 * sc, 5.4 * sc, 6), pine);
       crown.position.set(f.x + f.nx * lat * side, f.y + 2.5 * sc, f.z + f.nz * lat * side);
       crown.castShadow = false;
+      crown.receiveShadow = false;
       crown.userData.ownedGeo = true;
       crown.userData.decorative = true;
       crown.raycast = () => {};

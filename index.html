@@ -12,7 +12,7 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Outfit:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./src/style.css?v=32" />
+    <link rel="stylesheet" href="./src/style.css?v=45" />
     <script type="importmap">
       {
         "imports": {
@@ -39,7 +39,10 @@
         <div class="tag">Endless coastal cruise</div>
       </div>
       <div id="preview-garage" class="garage hidden" aria-label="Choose car"></div>
-      <button type="button" id="begin-drive" class="primary">Begin Drive</button>
+      <div class="preview-actions">
+        <button type="button" id="begin-drive" class="primary">Begin Drive</button>
+        <button type="button" id="begin-race" class="secondary">Race</button>
+      </div>
       <button type="button" id="preview-fullscreen" class="preview-fs">Fullscreen</button>
       <p class="preview-credits">Kenney CC0 · OpenCity scenery · Akhansha Sen</p>
     </div>
@@ -51,12 +54,56 @@
       </button>
 
       <div class="oc-bar">
-        <div class="oc-hint" id="hud-hint">WASD drive · Space handbrake · C look back · Mouse orbit · R reset · Esc pause · Ctrl+F fullscreen</div>
+        <div class="oc-hint" id="hud-hint">WASD drive · Space drift · H lights · C look back · Mouse orbit · R reset · Esc pause · Ctrl+F fullscreen</div>
         <div class="oc-car" id="hud-car">Sports</div>
         <div class="oc-speed">
           <span id="speed-value">0</span>
           <span class="oc-unit">KM/H</span>
           <span class="oc-gear" id="gear">GEAR 1</span>
+        </div>
+      </div>
+
+      <div id="race-hud" class="race-hud hidden" aria-live="polite">
+        <div class="race-pos" id="race-pos">—</div>
+        <div class="race-time" id="race-time">0:00.0</div>
+      </div>
+      <div id="race-countdown" class="race-countdown hidden" aria-live="assertive">
+        <div class="xmas-tree" id="xmas-tree">
+          <div class="xmas-pole">
+            <div class="xmas-row xmas-pre">
+              <span class="xmas-bulb pre" data-bulb="pre-l"></span>
+              <span class="xmas-label">PRE</span>
+              <span class="xmas-bulb pre" data-bulb="pre-r"></span>
+            </div>
+            <div class="xmas-row xmas-stage">
+              <span class="xmas-bulb stage" data-bulb="stage-l"></span>
+              <span class="xmas-label">STAGE</span>
+              <span class="xmas-bulb stage" data-bulb="stage-r"></span>
+            </div>
+            <div class="xmas-divider"></div>
+            <div class="xmas-row xmas-amber">
+              <span class="xmas-bulb amber" data-bulb="amber-0"></span>
+            </div>
+            <div class="xmas-row xmas-amber">
+              <span class="xmas-bulb amber" data-bulb="amber-1"></span>
+            </div>
+            <div class="xmas-row xmas-amber">
+              <span class="xmas-bulb amber" data-bulb="amber-2"></span>
+            </div>
+            <div class="xmas-row xmas-green">
+              <span class="xmas-bulb green" data-bulb="green-l"></span>
+              <span class="xmas-bulb green" data-bulb="green-r"></span>
+            </div>
+          </div>
+          <div class="xmas-go-text" id="xmas-go-text">GO</div>
+        </div>
+      </div>
+      <div id="race-results" class="race-results hidden">
+        <div class="race-results-card">
+          <h2 id="race-results-place">1ST</h2>
+          <p id="race-results-time">0:00.0</p>
+          <p id="race-results-medal" class="race-medal"></p>
+          <button type="button" id="race-results-ok" class="primary">Continue</button>
         </div>
       </div>
 
@@ -81,6 +128,7 @@
         <div class="knob" id="knob"></div>
       </div>
       <div class="pedals">
+        <button type="button" class="pedal pedal-drift" id="drift">Drift</button>
         <button type="button" class="pedal" id="brake">Brake</button>
         <button type="button" class="pedal" id="gas">Drive</button>
       </div>
@@ -103,6 +151,7 @@
         <ul class="oc-pause-menu" id="pause-menu">
           <li class="selected" data-action="resume">RESUME</li>
           <li data-action="vehicle">CHANGE VEHICLE</li>
+          <li data-action="race">RACE</li>
           <li data-action="settings">SETTINGS</li>
           <li data-action="fullscreen">FULLSCREEN</li>
           <li data-action="restart">RESTART</li>
@@ -134,9 +183,22 @@
             <span class="hint-touch">Tap a car · BACK to menu · RESUME to drive</span>
           </p>
         </div>
+        <div class="oc-pause-race hidden" id="pause-race">
+          <h2 class="oc-pause-sub">RACE SETUP</h2>
+          <ul class="settings-list" id="race-setup-list">
+            <li class="settings-row selected" data-race="length"><span>LENGTH</span><span class="settings-val" id="race-len-val">&lt; 800 M &gt;</span></li>
+            <li class="settings-row" data-race="diff"><span>DIFFICULTY</span><span class="settings-val" id="race-diff-val">&lt; MEDIUM &gt;</span></li>
+            <li class="settings-row race-start-row" data-race="start"><span>START RACE</span><span class="settings-val">▶</span></li>
+          </ul>
+          <button type="button" class="pause-back" id="pause-race-back">◀ BACK</button>
+          <p class="oc-pause-hint">
+            <span class="hint-desk">UP / DOWN row · LEFT / RIGHT change · ENTER start · ESC back</span>
+            <span class="hint-touch">Tap a row · START RACE · BACK to menu</span>
+          </p>
+        </div>
         <div class="oc-pause-controls">
-          <span class="oc-pause-controls-desk">WASD / ARROWS drive · LT/RT throttle/brake · A handbrake · Y look back · SPACE drift · C look back · MOUSE orbit · R reset · ESC pause · M map · CTRL+F fullscreen · CTRL+SHIFT+C free-fly</span>
-          <span class="oc-pause-controls-touch">Joystick: left / right steer · up drive · down brake · or use pedals · Pause / Reset at top</span>
+          <span class="oc-pause-controls-desk">WASD / ARROWS drive · LT/RT throttle/brake · A / SPACE drift · H headlights · Y / C look back · MOUSE orbit · R reset · ESC pause · M map · CTRL+F fullscreen</span>
+          <span class="oc-pause-controls-touch">Joystick: left / right steer · up drive · down brake · Drift pedal · Pause / Reset at top</span>
         </div>
       </div>
     </div>
@@ -158,6 +220,6 @@
       </div>
     </div>
 
-    <script type="module" src="./src/game.js?v=32"></script>
+    <script type="module" src="./src/game.js?v=45"></script>
   </body>
 </html>
