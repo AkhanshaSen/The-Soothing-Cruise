@@ -27,6 +27,11 @@ const BRAKE_FORCE = 11800;
 const HANDBRAKE_FORCE = 3200;
 const REVERSE_FORCE = 2800;
 
+/** Drift unlock — slip/FX only above this speed (km/h) with a hard steer. */
+export const DRIFT_MIN_KMH = 130;
+export const DRIFT_HARD_STEER = 0.82;
+const DRIFT_MIN_MS = DRIFT_MIN_KMH / 3.6;
+
 export function steerLockAt(speed) {
   return lerp(0.40, 0.08, smoothstep(4, 55, Math.abs(speed)));
 }
@@ -67,11 +72,11 @@ function perfFromSpec(spec) {
   };
 }
 
-export function stepVehicle(state, input, dt, spec, roadHalf = 6.4) {
+export function stepVehicle(state, input, dt, spec, roadHalf = 6.4, opts = {}) {
   const steerIn = clamp(input.steer ?? 0, -1, 1);
   const throttle = clamp(input.throttle ?? 0, 0, 1);
   const brake = clamp(input.brake ?? 0, 0, 1);
-  const handbrake = clamp(input.handbrake ?? 0, 0, 1);
+  const handbrakeIn = clamp(input.handbrake ?? 0, 0, 1);
 
   const perf = perfFromSpec(spec);
   const mass = spec?.mass ?? MASS;
@@ -88,6 +93,11 @@ export function stepVehicle(state, input, dt, spec, roadHalf = 6.4) {
 
   let speed = state.speed ?? 0;
   const absSpeed = Math.abs(speed);
+  // Handbrake always slows; slip only at ≥130 km/h with a hard left/right steer.
+  const hardSteer = Math.abs(steerIn) >= DRIFT_HARD_STEER;
+  const canDrift = absSpeed >= DRIFT_MIN_MS && hardSteer;
+  const handbrake = handbrakeIn;
+  const driftHb = canDrift ? handbrakeIn : 0;
 
   const lockScale = (spec?.steer ?? 0.58) / 0.62;
   const maxLock = steerLockAt(speed) * lockScale * perf.steer;
@@ -135,12 +145,12 @@ export function stepVehicle(state, input, dt, spec, roadHalf = 6.4) {
   speed = clamp(speed, -reverseMax, topMs);
   state.speed = speed;
 
-  const grip = 1 - handbrake * 0.5 * perf.drift;
+  const grip = 1 - driftHb * 0.5 * perf.drift;
   // OpenCity: +steer turns the nose right → negative yawOffset in road frame.
   let yawRate = -(speed * Math.tan(state.steerAngle)) / wheelbase;
   yawRate *= grip;
-  if (handbrake > 0.2 && absSpeed > 4) {
-    yawRate += -steerIn * handbrake * absSpeed * 0.028 * perf.drift;
+  if (driftHb > 0.2 && canDrift) {
+    yawRate += -steerIn * driftHb * absSpeed * 0.042 * perf.drift;
   }
 
   // Turn-in at parking speeds when throttle is held (yawRate is 0 when speed = 0).
@@ -150,21 +160,34 @@ export function stepVehicle(state, input, dt, spec, roadHalf = 6.4) {
 
   state.yawOffset += yawRate * dt;
 
-  if (Math.abs(steerIn) < 0.06 && handbrake < 0.1 && throttle < 0.05 && brake < 0.05) {
+  if (Math.abs(steerIn) < 0.06 && driftHb < 0.1 && throttle < 0.05 && brake < 0.05) {
     state.yawOffset = damp(state.yawOffset, 0, 4, dt);
   }
-  state.yawOffset = clamp(state.yawOffset, -0.34, 0.34);
+  // Ordinary steering stays tight; unlocked handbrake opens a wider slip window.
+  const yawCap = driftHb > 0.15
+    ? lerp(0.34, 0.95, clamp(driftHb * perf.drift, 0, 1))
+    : 0.34;
+  state.yawOffset = clamp(state.yawOffset, -yawCap, yawCap);
 
   state.s = Math.max(0, state.s + speed * Math.cos(state.yawOffset) * dt);
   state.lateral += speed * Math.sin(state.yawOffset) * dt;
 
-  state.lateral = clamp(state.lateral, -(roadHalf + 16), roadHalf + 16);
+  // Cruise allows a soft shoulder; race (strict) hard-clips to the asphalt.
+  const margin = opts.strict ? 0.35 : 16;
+  state.lateral = clamp(state.lateral, -(roadHalf + margin), roadHalf + margin);
+  if (opts.strict && Math.abs(state.lateral) > roadHalf * 0.9) {
+    const edge = Math.sign(state.lateral || 1) * roadHalf * 0.88;
+    state.lateral = damp(state.lateral, edge, 10, dt);
+    state.yawOffset = damp(state.yawOffset, 0, 8, dt);
+    state.speed *= 1 - 0.55 * dt;
+  }
 
   state.vy = 0;
   state.r = 0;
   state.throttle = throttle;
   state.brake = brake;
-  state.handbrake = handbrake;
+  // Expose effective drift input (0 below unlock speed) for FX / HUD.
+  state.handbrake = driftHb;
 
   return {
     steerAngle: state.steerAngle,
@@ -174,6 +197,6 @@ export function stepVehicle(state, input, dt, spec, roadHalf = 6.4) {
   };
 }
 
-export function updateDrive(state, input, dt, spec, roadHalf) {
-  return stepVehicle(state, input, dt, spec, roadHalf);
+export function updateDrive(state, input, dt, spec, roadHalf, opts) {
+  return stepVehicle(state, input, dt, spec, roadHalf, opts);
 }

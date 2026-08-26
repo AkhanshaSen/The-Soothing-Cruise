@@ -10,6 +10,15 @@ import { tickWater } from './water.js';
 import { CARS } from './vehicle/catalog.js';
 import { Input, driverInputFrom } from './core/input.js';
 import { bindTouch } from './ui/touch.js';
+import { Headlights } from './vehicle/lights.js';
+import { SkidFx } from './fx/skids.js';
+import {
+  HighwayRace,
+  RACE_LENGTHS,
+  RACE_LENGTH_LABELS,
+  RACE_DIFFS,
+  RACE_DIFF_LABELS,
+} from './race/highway.js';
 
 // --- DOM ---
 const canvas = document.getElementById('game');
@@ -20,6 +29,7 @@ const loadingStatus = document.getElementById('loading-status');
 const previewEl = document.getElementById('preview');
 const previewGarage = document.getElementById('preview-garage');
 const beginDriveBtn = document.getElementById('begin-drive');
+const beginRaceBtn = document.getElementById('begin-race');
 const speedEl = document.getElementById('speed-value');
 const gearEl = document.getElementById('gear');
 const hudCarEl = document.getElementById('hud-car');
@@ -37,6 +47,29 @@ const fullmapCanvas = document.getElementById('fullmap');
 const settingsList = document.getElementById('settings-list');
 const touchEl = document.getElementById('touch');
 const rotateHintEl = document.getElementById('rotate-hint');
+const raceHudEl = document.getElementById('race-hud');
+const racePosEl = document.getElementById('race-pos');
+const raceTimeEl = document.getElementById('race-time');
+const raceCountdownEl = document.getElementById('race-countdown');
+const xmasGoText = document.getElementById('xmas-go-text');
+const xmasBulbs = {
+  preL: document.querySelector('[data-bulb="pre-l"]'),
+  preR: document.querySelector('[data-bulb="pre-r"]'),
+  stageL: document.querySelector('[data-bulb="stage-l"]'),
+  stageR: document.querySelector('[data-bulb="stage-r"]'),
+  amber0: document.querySelector('[data-bulb="amber-0"]'),
+  amber1: document.querySelector('[data-bulb="amber-1"]'),
+  amber2: document.querySelector('[data-bulb="amber-2"]'),
+  greenL: document.querySelector('[data-bulb="green-l"]'),
+  greenR: document.querySelector('[data-bulb="green-r"]'),
+};
+const raceResultsEl = document.getElementById('race-results');
+const raceResultsPlace = document.getElementById('race-results-place');
+const raceResultsTime = document.getElementById('race-results-time');
+const raceResultsMedal = document.getElementById('race-results-medal');
+const raceResultsOk = document.getElementById('race-results-ok');
+const pauseRaceEl = document.getElementById('pause-race');
+const raceSetupList = document.getElementById('race-setup-list');
 
 const uiRoot = document.body;
 const driveInput = new Input();
@@ -64,7 +97,7 @@ function wantsTouchUi() {
 const isCoarse = wantsTouchUi();
 
 if (wantsTouchUi() && hudHintEl) {
-  hudHintEl.textContent = 'Joystick: steer · up drive · down brake · or use pedals';
+  hudHintEl.textContent = 'Joystick: steer · up drive · down brake · Drift pedal · or use pedals';
 }
 
 function isPortraitPhone() {
@@ -99,6 +132,20 @@ async function lockLandscape() {
 let pauseIndex = 0;
 let pauseView = 'menu';
 let pauseSettingsIndex = 0;
+let pauseRaceIndex = 0;
+let raceSetup = { lengthIdx: 1, diffIdx: 1 };
+/** @type {HighwayRace | null} */
+let activeRace = null;
+let raceStarting = false;
+let lastNight = 0;
+
+function raceSetupLabels() {
+  return {
+    lengthLabel: RACE_LENGTH_LABELS[raceSetup.lengthIdx],
+    diffLabel: RACE_DIFF_LABELS[raceSetup.diffIdx],
+  };
+}
+
 let gfx = loadGfx();
 if (wantsTouchUi() && gfx.resIdx > 1) {
   gfx = { ...gfx, resIdx: 1 };
@@ -116,12 +163,20 @@ function showPreview() {
   hud.classList.add('hidden');
   pauseEl.classList.add('hidden');
   mapOverlay.classList.add('hidden');
+  raceHudEl?.classList.add('hidden');
+  raceCountdownEl?.classList.add('hidden');
+  raceResultsEl?.classList.add('hidden');
+  raceResultsEl?.classList.remove('showing');
   setTouchVisible(false);
 }
 
 function startDrive() {
+  endRace(false);
   previewEl.classList.add('hidden');
   hud.classList.remove('hidden');
+  raceHudEl?.classList.add('hidden');
+  raceCountdownEl?.classList.add('hidden');
+  raceResultsEl?.classList.add('hidden');
   mode = 'drive';
   state.s = 40;
   state.lateral = 0;
@@ -140,9 +195,15 @@ function startDrive() {
 }
 
 beginDriveBtn.addEventListener('click', startDrive);
+beginRaceBtn?.addEventListener('click', () => {
+  raceSetup.lengthIdx = 1;
+  raceSetup.diffIdx = 1;
+  startRaceFromSetup();
+});
 document.getElementById('preview-fullscreen')?.addEventListener('click', () => {
   enterFullscreen();
 });
+raceResultsOk?.addEventListener('click', () => endRace(true));
 mapBackBtn.addEventListener('click', () => setMapOpen(false));
 minimapBtn.addEventListener('click', () => {
   if (mode === 'drive' || mode === 'map') setMapOpen(!mapOpen);
@@ -159,6 +220,8 @@ function refreshPauseUi() {
     view: pauseView,
     settingsIndex: pauseSettingsIndex,
     gfx,
+    raceIndex: pauseRaceIndex,
+    raceSetup: raceSetupLabels(),
   });
 }
 
@@ -229,6 +292,12 @@ function activatePauseItem(index) {
     refreshPauseUi();
     return;
   }
+  if (action === 'race') {
+    pauseView = 'race';
+    pauseRaceIndex = 0;
+    refreshPauseUi();
+    return;
+  }
   runPauseAction(action);
 }
 
@@ -252,8 +321,31 @@ function backToPauseMenu() {
 
 document.getElementById('pause-settings-back')?.addEventListener('click', backToPauseMenu);
 document.getElementById('pause-vehicle-back')?.addEventListener('click', backToPauseMenu);
+document.getElementById('pause-race-back')?.addEventListener('click', backToPauseMenu);
+
+raceSetupList?.addEventListener('click', (e) => {
+  const row = e.target.closest('.settings-row');
+  if (!row || mode !== 'paused' || pauseView !== 'race') return;
+  const kind = row.dataset.race;
+  const rows = [...raceSetupList.querySelectorAll('.settings-row')];
+  pauseRaceIndex = Math.max(0, rows.indexOf(row));
+  if (kind === 'start') {
+    startRaceFromSetup();
+    return;
+  }
+  if (kind === 'length') {
+    raceSetup.lengthIdx = (raceSetup.lengthIdx + 1) % RACE_LENGTHS.length;
+  } else if (kind === 'diff') {
+    raceSetup.diffIdx = (raceSetup.diffIdx + 1) % RACE_DIFFS.length;
+  }
+  refreshPauseUi();
+});
 
 function restartDrive() {
+  if (activeRace) {
+    startRaceFromSetup();
+    return;
+  }
   state.s = 40;
   state.lateral = 0;
   state.yawOffset = 0;
@@ -289,11 +381,14 @@ function handlePauseInput() {
     index: pauseIndex,
     view: pauseView,
     settingsIndex: pauseSettingsIndex,
+    raceIndex: pauseRaceIndex,
+    raceSetup: raceSetupLabels(),
     gfx,
     onAction: runPauseAction,
     onViewChange: (view) => {
       pauseView = view;
       if (view === 'settings') pauseSettingsIndex = 0;
+      if (view === 'race') pauseRaceIndex = 0;
       refreshPauseUi();
     },
     onGfxChange: (next) => {
@@ -302,12 +397,22 @@ function handlePauseInput() {
       applyGfx();
       refreshPauseUi();
     },
+    onRaceChange: (row, dir) => {
+      if (row === 0) {
+        raceSetup.lengthIdx = (raceSetup.lengthIdx + dir + RACE_LENGTHS.length) % RACE_LENGTHS.length;
+      } else if (row === 1) {
+        raceSetup.diffIdx = (raceSetup.diffIdx + dir + RACE_DIFFS.length) % RACE_DIFFS.length;
+      }
+      refreshPauseUi();
+    },
+    onRaceStart: () => startRaceFromSetup(),
     mobile: wantsTouchUi(),
   });
 
   if (result.index !== pauseIndex) pauseIndex = result.index;
   if (result.view !== pauseView) pauseView = result.view;
   if (result.settingsIndex !== pauseSettingsIndex) pauseSettingsIndex = result.settingsIndex;
+  if (result.raceIndex != null && result.raceIndex !== pauseRaceIndex) pauseRaceIndex = result.raceIndex;
 }
 
 pauseGarage.addEventListener('click', (e) => {
@@ -340,6 +445,7 @@ const CAR_MODELS = [
   { id: 'hatch', label: 'Hatch', file: 'hatchback-sports.glb' },
   { id: 'sedan', label: 'Sedan', file: 'sedan.glb' },
   { id: 'race', label: 'Race', file: 'race.glb' },
+  { id: 'f1', label: 'Formula 1', file: 'race-future.glb' },
   { id: 'suv', label: 'SUV', file: 'suv.glb' },
   { id: 'van', label: 'Van', file: 'van.glb' },
   { id: 'police', label: 'Police', file: 'police.glb' },
@@ -404,6 +510,7 @@ async function loadKenneyCar(file, spec) {
   for (const child of root.children) child.position.y += lift;
 
   root.userData.modelForward = measureModelForward(root);
+  bindCarWheels(root);
 
   root.traverse((o) => {
     if (!o.isMesh) return;
@@ -421,7 +528,34 @@ async function loadKenneyCar(file, spec) {
   modelCache.set(cacheKey, root);
   const out = root.clone(true);
   out.userData.modelForward = root.userData.modelForward.clone();
+  bindCarWheels(out);
   return out;
+}
+
+/** Kenney hubs: wheel-front/back-left/right. Steer Y, spin X (axle along X). */
+function bindCarWheels(root) {
+  const wheels = [];
+  root.traverse((o) => {
+    const n = (o.name || '').toLowerCase();
+    if (!n.includes('wheel')) return;
+    if (!n.includes('left') && !n.includes('right')) return;
+    o.rotation.order = 'YXZ';
+    wheels.push({ obj: o, front: n.includes('front'), spin: 0 });
+  });
+  root.userData.wheels = wheels;
+}
+
+function updateCarWheels(dt) {
+  const wheels = car?.userData?.wheels;
+  if (!wheels?.length) return;
+  const radius = 0.34;
+  const dSpin = ((state.speed ?? 0) / radius) * dt;
+  const steer = -(state.steerAngle ?? 0);
+  for (const w of wheels) {
+    w.spin += dSpin;
+    w.obj.rotation.x = w.spin;
+    w.obj.rotation.y = w.front ? steer : 0;
+  }
 }
 
 function buildFallbackCar() {
@@ -705,6 +839,10 @@ let car = buildFallbackCar();
 car.frustumCulled = true;
 scene.add(car);
 
+/** @type {Headlights | null} */
+let headlights = null;
+const skidFx = new SkidFx(scene, camera);
+
 let activeCarId = 'sport';
 let activeCarSpec = CARS.find((c) => c.id === activeCarId) ?? CARS[0];
 let swapping = false;
@@ -712,6 +850,151 @@ let ready = false;
 let frameCounter = 0;
 /** @type {'loading' | 'preview' | 'drive' | 'paused' | 'map'} */
 let mode = 'loading';
+
+function formatRaceTime(t) {
+  const m = Math.floor(t / 60);
+  const s = t - m * 60;
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+}
+
+function updateRaceHud() {
+  if (!activeRace || !raceHudEl) return;
+  const h = activeRace.hud();
+  raceHudEl.classList.remove('hidden');
+  if (racePosEl) racePosEl.textContent = `${h.position}${ordinalSuffix(h.position)} / ${h.fieldSize}`;
+  if (raceTimeEl) raceTimeEl.textContent = formatRaceTime(h.time);
+
+  if (raceCountdownEl) {
+    const cd = h.countdown;
+    if (cd) {
+      raceCountdownEl.classList.remove('hidden');
+      raceCountdownEl.classList.toggle('go', !!cd.go);
+      const setOn = (el, on) => el?.classList.toggle('on', !!on);
+      setOn(xmasBulbs.preL, cd.preStage);
+      setOn(xmasBulbs.preR, cd.preStage);
+      setOn(xmasBulbs.stageL, cd.stage);
+      setOn(xmasBulbs.stageR, cd.stage);
+      setOn(xmasBulbs.amber0, cd.ambers?.[0]);
+      setOn(xmasBulbs.amber1, cd.ambers?.[1]);
+      setOn(xmasBulbs.amber2, cd.ambers?.[2]);
+      setOn(xmasBulbs.greenL, cd.go);
+      setOn(xmasBulbs.greenR, cd.go);
+      if (xmasGoText) {
+        xmasGoText.style.opacity = cd.go ? String(cd.alpha ?? 1) : '0';
+        xmasGoText.style.transform = `scale(${cd.scale ?? 1})`;
+      }
+    } else {
+      raceCountdownEl.classList.add('hidden');
+      raceCountdownEl.classList.remove('go');
+      Object.values(xmasBulbs).forEach((el) => el?.classList.remove('on'));
+      if (xmasGoText) xmasGoText.style.opacity = '0';
+    }
+  }
+
+  if (h.results && raceResultsEl && !raceResultsEl.classList.contains('showing')) {
+    raceResultsEl.classList.remove('hidden');
+    raceResultsEl.classList.add('showing');
+    if (raceResultsPlace) raceResultsPlace.textContent = h.results.label;
+    if (raceResultsTime) raceResultsTime.textContent = formatRaceTime(h.results.time);
+    if (raceResultsMedal) {
+      if (h.medal?.prize) {
+        raceResultsMedal.textContent = `${h.medal.prize}${h.medal.rankedUp ? ' · RANK UP!' : ''}`;
+        raceResultsMedal.style.color = h.medal.prizeColor || h.medal.color || '';
+      } else {
+        raceResultsMedal.textContent = 'NO PRIZE';
+        raceResultsMedal.style.color = '#8a857a';
+      }
+    }
+  }
+}
+
+function ordinalSuffix(n) {
+  const t = n % 10;
+  const h = n % 100;
+  if (h >= 11 && h <= 13) return 'TH';
+  return t === 1 ? 'ST' : t === 2 ? 'ND' : t === 3 ? 'RD' : 'TH';
+}
+
+function endRace(toPreview) {
+  if (activeRace) {
+    activeRace.dispose();
+    activeRace = null;
+  }
+  raceHudEl?.classList.add('hidden');
+  raceCountdownEl?.classList.add('hidden');
+  if (raceResultsEl) {
+    raceResultsEl.classList.add('hidden');
+    raceResultsEl.classList.remove('showing');
+  }
+  if (toPreview) {
+    mode = 'preview';
+    hud.classList.add('hidden');
+    previewEl.classList.remove('hidden');
+    setTouchVisible(false);
+    document.exitPointerLock?.();
+    state.s = 40;
+    state.lateral = 0;
+    state.yawOffset = 0;
+    state.speed = 0;
+    _simAcc = 0;
+  }
+}
+
+async function startRaceFromSetup() {
+  if (raceStarting || swapping) return;
+  raceStarting = true;
+  try {
+    if (mode === 'paused') setPaused(false);
+    endRace(false);
+    previewEl.classList.add('hidden');
+    hud.classList.remove('hidden');
+    raceResultsEl?.classList.add('hidden');
+    raceResultsEl?.classList.remove('showing');
+
+    // Prefer a faster rival chassis when the player is in F1.
+    const rivalIds = activeCarSpec.top >= 250
+      ? ['f1', 'race', 'sport']
+      : ['sport', 'hatch', 'police'];
+    const rivalSpecs = rivalIds.map(
+      (id) => CARS.find((c) => c.id === id) ?? CARS[0],
+    );
+    const race = new HighwayRace({
+      highway: world.highway,
+      scene,
+      parent: world.stage,
+      length: RACE_LENGTHS[raceSetup.lengthIdx],
+      difficulty: RACE_DIFFS[raceSetup.diffIdx],
+      startS: 40,
+      playerSpec: activeCarSpec,
+      rivalSpecs,
+      loadMesh: async (spec) => {
+        const model = CAR_MODELS.find((m) => m.id === spec.id)
+          || { file: (spec.model || '').split('/').pop(), id: spec.id };
+        return loadKenneyCar(model.file || 'sedan-sports.glb', spec);
+      },
+    });
+    await race.begin(state);
+    activeRace = race;
+    mode = 'drive';
+    _simAcc = 0;
+    lookYaw = 0;
+    lookPitch = 0;
+    chaseCam.reset();
+    const start = world.highway.at(state.s);
+    applyCarTransform(start);
+    world.recenter(start.x, 0, start.z);
+    world.syncImmediate(state.s);
+    canvas.focus({ preventScroll: true });
+    setTouchVisible(true);
+    if (wantsTouchUi()) enterFullscreen();
+    else requestPointerLock();
+  } catch (err) {
+    console.warn('race start failed', err);
+    endRace(true);
+  } finally {
+    raceStarting = false;
+  }
+}
 
 async function setCar(model) {
   if (swapping) return;
@@ -723,6 +1006,9 @@ async function setCar(model) {
     car = next;
     car.frustumCulled = true;
     scene.add(car);
+    if (!headlights) headlights = new Headlights(car);
+    else headlights.attach(car);
+    headlights.update(lastNight);
     applyCarTransform(world.highway.at(state.s));
     activeCarId = model.id;
     activeCarSpec = spec;
@@ -830,13 +1116,25 @@ function simulateDrive(dt) {
   let driveOut = { steerAngle: 0, slipAngle: 0 };
   const di = driverInput();
   const maxSteps = dt > 0.033 ? 4 : MAX_SUBSTEPS;
+  const held = !!activeRace?.holding;
+  const roadHalf = activeRace?.roadHalf ?? ROAD_HALF;
+  const driveOpts = activeRace ? { strict: true } : {};
 
   while (_simAcc >= SUBSTEP && n < maxSteps) {
-    driveOut = stepVehicle(state, di, SUBSTEP, activeCarSpec, ROAD_HALF);
+    if (held) {
+      // Countdown: freeze physics; keep input sampled for rev display.
+      driveOut = { steerAngle: state.steerAngle, slipAngle: state.yawOffset };
+    } else {
+      driveOut = stepVehicle(state, di, SUBSTEP, activeCarSpec, roadHalf, driveOpts);
+    }
     _simAcc -= SUBSTEP;
     n++;
   }
   if (n >= maxSteps) _simAcc = 0;
+
+  if (activeRace) {
+    activeRace.step(dt, state, held ? { ...di, throttle: di.throttle, brake: 0, steer: 0 } : di);
+  }
 
   const rollTarget = clamp(-driveOut.slipAngle * 0.4 + state.steerAngle * 0.08, -0.25, 0.25);
   state.rollLoad = damp(state.rollLoad, rollTarget, 2.5, dt);
@@ -849,13 +1147,24 @@ function simulateDrive(dt) {
 function syncWorld(dt) {
   const f = world.highway.at(state.s);
   applyCarTransform(f);
+  updateCarWheels(dt);
   world.recenter(f.x, 0, f.z);
-  world.sync(state.s);
+  world.sync(state.s, { speed: state.speed });
 
   const p = playerWorld(f);
   const sky = skySystem.update(dt, p);
+  lastNight = sky.night;
   tickWater(dt, sky.night);
   world.setNightLevel(sky.night, { x: f.x + p.x, y: f.y + p.y, z: f.z + p.z });
+  headlights?.update(sky.night);
+
+  skidFx.update(dt, p, {
+    speed: state.speed,
+    handbrake: state.handbrake,
+    yawOffset: state.yawOffset,
+    steer: driveInput.steer,
+    drift: activeCarSpec.drift,
+  });
 
   if (flyMode) {
     flyStep(dt);
@@ -876,7 +1185,13 @@ function update(dt) {
   if (driveInput.consumeFullscreenToggle()) toggleFullscreen();
   if (driveInput.consumeFlyToggle()) toggleFly();
 
+  if (driveInput.lightsPressed) {
+    headlights?.toggle();
+    headlights?.update(lastNight);
+  }
+
   if (driveInput.skipPressed && mode === 'preview') startDrive();
+  if (driveInput.skipPressed && activeRace?.holding) activeRace.skipCountdown();
   if (driveInput.resetPressed && mode === 'drive') restartDrive();
 
   handleMenuKeys();
@@ -898,12 +1213,14 @@ function update(dt) {
     if (!flyMode) simulateDrive(dt);
     syncWorld(dt);
     updateHud();
+    if (activeRace) updateRaceHud();
     return;
   }
 
   if (mode === 'paused' || mode === 'map') {
     syncWorld(dt);
     updateHud();
+    if (activeRace) updateRaceHud();
   }
 }
 

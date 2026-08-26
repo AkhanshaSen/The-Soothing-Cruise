@@ -13,6 +13,7 @@ const KEYS = {
   skip: ['Enter', 'NumpadEnter'],
   pause: ['Escape'],
   map: ['KeyM'],
+  lights: ['KeyH'],
   menuUp: ['ArrowUp', 'KeyW'],
   menuDown: ['ArrowDown', 'KeyS'],
   menuLeft: ['ArrowLeft', 'KeyA'],
@@ -61,6 +62,7 @@ export class Input {
     this.skipPressed = false;
     this.pausePressed = false;
     this.mapPressed = false;
+    this.lightsPressed = false;
     this.fullscreenToggle = false;
     this.flyToggle = false;
     this.menuUpPressed = false;
@@ -186,6 +188,7 @@ export class Input {
 
     this.pausePressed = this.pressed('pause') || padEdge(PAD.start);
     this.mapPressed = this.pressed('map');
+    this.lightsPressed = this.pressed('lights');
     this.menuUpPressed = this.pressed('menuUp') || padEdge(PAD.dpadUp) || stick < 0;
     this.menuDownPressed = this.pressed('menuDown') || padEdge(PAD.dpadDown) || stick > 0;
     this.menuLeftPressed = this.pressed('menuLeft') || padEdge(PAD.dpadLeft) || stickX < 0;

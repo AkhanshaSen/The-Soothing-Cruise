@@ -1,5 +1,5 @@
 /** OpenCity-style pause menu — keyboard navigation. */
-export const PAUSE_ACTIONS = ['resume', 'vehicle', 'settings', 'fullscreen', 'restart'];
+export const PAUSE_ACTIONS = ['resume', 'vehicle', 'race', 'settings', 'fullscreen', 'restart'];
 
 export const TIME_MODES = [
   { id: 'dyn30', label: 'DYNAMIC (30 MIN)', mode: 'dynamic', cycle: 30 },
@@ -76,11 +76,20 @@ function settingsValues(gfx) {
 
 const LABELS = ['RESOLUTION', 'DRAW DISTANCE', 'SHADOWS', 'TIME OF DAY'];
 
-export function updatePauseMenu(root, { index, carName, view = 'menu', settingsIndex = 0, gfx } = {}) {
+export function updatePauseMenu(root, {
+  index,
+  carName,
+  view = 'menu',
+  settingsIndex = 0,
+  gfx,
+  raceIndex = 0,
+  raceSetup,
+} = {}) {
   const shell = root.querySelector('.oc-pause') || root.querySelector('#pause');
   const menu = root.querySelector('#pause-menu');
   const settings = root.querySelector('#pause-settings');
   const vehicle = root.querySelector('#pause-vehicle');
+  const race = root.querySelector('#pause-race');
   const carEl = root.querySelector('#pause-car');
   const hintMain = root.querySelector('#pause-hint-main');
   if (carEl) carEl.textContent = carName;
@@ -113,6 +122,20 @@ export function updatePauseMenu(root, { index, carName, view = 'menu', settingsI
     vehicle.classList.toggle('hidden', view !== 'vehicle');
     vehicle.style.display = view === 'vehicle' ? 'block' : 'none';
   }
+  if (race) {
+    race.hidden = false;
+    race.classList.toggle('hidden', view !== 'race');
+    race.style.display = view === 'race' ? 'block' : 'none';
+    if (view === 'race' && raceSetup) {
+      race.querySelectorAll('.settings-row').forEach((row, i) => {
+        row.classList.toggle('selected', i === raceIndex);
+      });
+      const lenEl = race.querySelector('#race-len-val');
+      const diffEl = race.querySelector('#race-diff-val');
+      if (lenEl) lenEl.textContent = `< ${raceSetup.lengthLabel} >`;
+      if (diffEl) diffEl.textContent = `< ${raceSetup.diffLabel} >`;
+    }
+  }
 }
 
 export function cycleSetting(gfx, row, dir, { mobile = false } = {}) {
@@ -128,30 +151,43 @@ export function cycleSetting(gfx, row, dir, { mobile = false } = {}) {
 }
 
 export function handlePauseNav(root, {
-  up, down, left, right, confirm, back, index, view, settingsIndex = 0, gfx, onAction, onViewChange, onGfxChange, mobile = false,
+  up, down, left, right, confirm, back, index, view, settingsIndex = 0, gfx, onAction, onViewChange, onGfxChange,
+  mobile = false, raceIndex = 0, raceSetup, onRaceChange, onRaceStart,
 }) {
   if (view === 'menu') {
     let next = index;
     if (up) next = (index - 1 + PAUSE_ACTIONS.length) % PAUSE_ACTIONS.length;
     if (down) next = (index + 1) % PAUSE_ACTIONS.length;
     if (next !== index) {
-      updatePauseMenu(root, { index: next, carName: root.querySelector('#pause-car')?.textContent, view, settingsIndex, gfx });
-      return { index: next, view, settingsIndex, consumed: true };
+      updatePauseMenu(root, {
+        index: next,
+        carName: root.querySelector('#pause-car')?.textContent,
+        view,
+        settingsIndex,
+        gfx,
+        raceIndex,
+        raceSetup,
+      });
+      return { index: next, view, settingsIndex, raceIndex, consumed: true };
     }
     if (confirm) {
       const action = PAUSE_ACTIONS[index];
       if (action === 'settings') {
         onViewChange?.('settings');
-        return { index, view: 'settings', settingsIndex: 0, consumed: true };
+        return { index, view: 'settings', settingsIndex: 0, raceIndex, consumed: true };
       }
       if (action === 'vehicle') {
         onViewChange?.('vehicle');
-        return { index, view: 'vehicle', settingsIndex, consumed: true };
+        return { index, view: 'vehicle', settingsIndex, raceIndex, consumed: true };
+      }
+      if (action === 'race') {
+        onViewChange?.('race');
+        return { index, view: 'race', settingsIndex, raceIndex: 0, consumed: true };
       }
       onAction?.(action);
-      return { index, view, settingsIndex, consumed: true };
+      return { index, view, settingsIndex, raceIndex, consumed: true };
     }
-    return { index, view, settingsIndex, consumed: false };
+    return { index, view, settingsIndex, raceIndex, consumed: false };
   }
 
   if (view === 'settings') {
@@ -161,24 +197,65 @@ export function handlePauseNav(root, {
     if (left || right) {
       const dir = right ? 1 : -1;
       onGfxChange?.(cycleSetting(gfx, row, dir, { mobile }));
-      return { index, view, settingsIndex: row, consumed: true };
+      return { index, view, settingsIndex: row, raceIndex, consumed: true };
     }
     if (back) {
       onViewChange?.('menu');
-      return { index, view: 'menu', settingsIndex: row, consumed: true };
+      return { index, view: 'menu', settingsIndex: row, raceIndex, consumed: true };
     }
     if (row !== settingsIndex) {
-      updatePauseMenu(root, { index, carName: root.querySelector('#pause-car')?.textContent, view, settingsIndex: row, gfx });
-      return { index, view, settingsIndex: row, consumed: true };
+      updatePauseMenu(root, {
+        index,
+        carName: root.querySelector('#pause-car')?.textContent,
+        view,
+        settingsIndex: row,
+        gfx,
+        raceIndex,
+        raceSetup,
+      });
+      return { index, view, settingsIndex: row, raceIndex, consumed: true };
     }
-    return { index, view, settingsIndex: row, consumed: false };
+    return { index, view, settingsIndex: row, raceIndex, consumed: false };
+  }
+
+  if (view === 'race') {
+    const rows = 3;
+    let row = raceIndex;
+    if (up) row = (raceIndex - 1 + rows) % rows;
+    if (down) row = (raceIndex + 1) % rows;
+    if ((left || right) && row < 2) {
+      onRaceChange?.(row, right ? 1 : -1);
+      return { index, view, settingsIndex, raceIndex: row, consumed: true };
+    }
+    if (confirm) {
+      if (row === 2) onRaceStart?.();
+      else onRaceChange?.(row, 1);
+      return { index, view, settingsIndex, raceIndex: row, consumed: true };
+    }
+    if (back) {
+      onViewChange?.('menu');
+      return { index, view: 'menu', settingsIndex, raceIndex: row, consumed: true };
+    }
+    if (row !== raceIndex) {
+      updatePauseMenu(root, {
+        index,
+        carName: root.querySelector('#pause-car')?.textContent,
+        view,
+        settingsIndex,
+        gfx,
+        raceIndex: row,
+        raceSetup,
+      });
+      return { index, view, settingsIndex, raceIndex: row, consumed: true };
+    }
+    return { index, view, settingsIndex, raceIndex: row, consumed: false };
   }
 
   if (back || confirm) {
     onViewChange?.('menu');
-    return { index, view: 'menu', settingsIndex, consumed: true };
+    return { index, view: 'menu', settingsIndex, raceIndex, consumed: true };
   }
-  return { index, view, settingsIndex, consumed: false };
+  return { index, view, settingsIndex, raceIndex, consumed: false };
 }
 
 export { LABELS };

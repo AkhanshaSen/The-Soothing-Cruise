@@ -47,9 +47,10 @@ export class ChaseCamera {
    */
   update(p, dt, { lookBack = false, orbitYaw = 0, orbitPitch = 0, speed = 0 } = {}) {
     const speedKmh = Math.abs(speed) * 3.6;
-    const speedT = clamp(speedKmh / 250, 0, 1);
-    const back = lerp(6.1, 8.4, speedT) + 3 * speedT * speedT;
-    const high = lerp(2.5, 3.1, speedT);
+    // Scale boom out to ~350 km/h so F1 does not sit on the old 250 cap.
+    const speedT = clamp(speedKmh / 350, 0, 1);
+    const back = lerp(6.1, 10.2, speedT) + 4.2 * speedT * speedT;
+    const high = lerp(2.5, 3.55, speedT);
 
     _dir.set(p.carTx, 0, p.carTz);
     const velSq = p.velTx * p.velTx + p.velTz * p.velTz;
@@ -118,7 +119,7 @@ export class ChaseCamera {
     this.camera.position.y = Math.max(this.camera.position.y, floorY);
     this.camera.lookAt(this._lookCur);
 
-    const fov = 62 + 18 * speedT * speedT;
+    const fov = 62 + 22 * speedT * speedT;
     const prevFov = this.camera.fov;
     this.camera.fov = approach(this.camera.fov, fov, 3, dt);
     if (Math.abs(this.camera.fov - prevFov) > 0.05) {

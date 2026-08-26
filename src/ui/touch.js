@@ -109,6 +109,19 @@ export function bindTouch(root, input, { onPause, onReset, onFullscreen } = {}) 
   holdPedal(gas, 'throttle');
   holdPedal(brake, 'brake');
 
+  const drift = root.querySelector('#drift');
+  if (drift) {
+    const setHb = (v) => (e) => {
+      e.preventDefault();
+      input.touch.handbrake = v;
+      drift.classList.toggle('pressed', !!v);
+    };
+    drift.addEventListener('pointerdown', setHb(1));
+    drift.addEventListener('pointerup', setHb(0));
+    drift.addEventListener('pointercancel', setHb(0));
+    drift.addEventListener('pointerleave', setHb(0));
+  }
+
   const arm = (el, fn) => {
     if (!el || !fn) return;
     el.addEventListener(
